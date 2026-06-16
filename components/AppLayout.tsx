@@ -35,7 +35,7 @@ const navItems = [
   {
     href: "/settings",
     icon: Settings,
-    label: "设置",
+    label: "系统设置",
     matchPattern: (path: string) => path === "/settings" || path.startsWith("/settings/"),
   },
 ]

@@ -1,57 +1,114 @@
-import { Plus, Edit, Trash2, Shield } from "lucide-react"
+"use client"
+
+import { useRouter } from "next/navigation"
+import { Plus } from "lucide-react"
+
+const tabs = [
+  { key: "jobs", label: "岗位管理", disabled: false },
+  { key: "roles", label: "角色权限", disabled: false },
+  { key: "company", label: "企业信息", disabled: true },
+]
+
+const roles = [
+  {
+    id: "1",
+    name: "系统管理员",
+    description: "拥有平台所有模块及AI基础配置的最高权限。",
+    userCount: 2,
+    status: "active",
+  },
+]
 
 export default function RolesPage() {
-  const roles = [
-    { id: "1", name: "系统管理员", description: "拥有系统最高权限", permissions: ["全部权限"], users: 1 },
-    { id: "2", name: "HR主管", description: "审核管理者，可管理招聘流程", permissions: ["岗位管理", "候选人管理", "数据分析"], users: 3 },
-    { id: "3", name: "招聘专员", description: "业务执行者，负责日常招聘", permissions: ["候选人管理", "匹配分析"], users: 12 },
-    { id: "4", name: "面试官", description: "仅可查看候选人信息和面试题目", permissions: ["查看候选人", "面试题库"], users: 8 },
-  ]
+  const router = useRouter()
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">角色权限管理</h1>
-          <p className="text-gray-500 mt-1">管理系统角色和权限分配</p>
-        </div>
-        <button className="flex items-center gap-2 px-4 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600 transition-colors">
-          <Plus className="w-4 h-4" />
-          新建角色
-        </button>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {roles.map((role) => (
-          <div key={role.id} className="bg-white rounded-xl border border-gray-100 p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
-                <Shield className="w-5 h-5 text-purple-600" />
+    <div>
+      {/* 白色卡片容器（Tab + 表格） */}
+      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+        {/* Tab 栏 */}
+        <div className="px-6 pt-5 pb-0">
+          <div className="flex items-center gap-1 border-b-0">
+            {tabs.map((tab) => (
+              <div
+                key={tab.key}
+                onClick={() => {
+                  if (!tab.disabled) {
+                    if (tab.key === "roles") router.push("/settings/roles")
+                    if (tab.key === "jobs") router.push("/settings/jobs")
+                  }
+                }}
+                className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+                  tab.disabled
+                    ? "text-gray-400 cursor-not-allowed"
+                    : tab.key === "roles"
+                    ? "bg-[#E8F5F3] text-[#4AB5A9] cursor-pointer"
+                    : "text-gray-500 hover:text-gray-700 cursor-pointer"
+                }`}
+              >
+                {tab.label}
               </div>
-              <div>
-                <h3 className="font-semibold text-gray-900">{role.name}</h3>
-                <p className="text-xs text-gray-500">{role.users} 位用户</p>
-              </div>
-            </div>
-            <p className="text-sm text-gray-500 mb-4">{role.description}</p>
-            <div className="flex flex-wrap gap-2 mb-4">
-              {role.permissions.map((perm, index) => (
-                <span key={index} className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded">
-                  {perm}
-                </span>
-              ))}
-            </div>
-            <div className="flex items-center gap-2">
-              <button className="flex-1 p-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg transition-colors flex items-center justify-center gap-1">
-                <Edit className="w-4 h-4" />
-                编辑
-              </button>
-              <button className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
+            ))}
           </div>
-        ))}
+        </div>
+
+        {/* 标题栏和新建角色按钮 */}
+        <div className="flex items-center justify-between px-6 py-5">
+          <h2 className="text-base font-semibold text-[#1C1E3A]">角色列表</h2>
+          <button
+            className="flex items-center gap-2 px-4 py-2 bg-[#4AB5A9] text-white rounded-lg hover:bg-[#3d9a8e] transition-colors text-sm font-medium shadow-sm"
+          >
+            <Plus className="w-4 h-4" />
+            新建角色
+          </button>
+        </div>
+
+        {/* 角色列表表格 */}
+        <div className="px-6 pb-6">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200 rounded-lg overflow-hidden">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">角色名称</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">角色描述</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">关联账号</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {roles.map((role) => (
+                  <tr key={role.id} className="hover:bg-gray-50/70 transition-colors">
+                    <td className="px-4 py-4">
+                      <span className="font-medium text-[#1C1E3A]">{role.name}</span>
+                    </td>
+                    <td className="px-4 py-4 text-sm text-gray-600">
+                      {role.description}
+                    </td>
+                    <td className="px-4 py-4 text-sm text-gray-700">
+                      {role.userCount} 人
+                    </td>
+                    <td className="px-4 py-4">
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium rounded-full ${
+                        role.status === "active"
+                          ? "bg-green-50 text-green-600"
+                          : "bg-gray-100 text-gray-500"
+                      }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${
+                          role.status === "active" ? "bg-green-500" : "bg-gray-400"
+                        }`} />
+                        {role.status === "active" ? "已启用" : "已停用"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-4">
+                      <span className="text-sm text-gray-400">系统预置，不可修改</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
   )

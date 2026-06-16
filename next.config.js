@@ -1,6 +1,9 @@
 // /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // serverExternalPackages: ['pdf-parse']
+  reactStrictMode: false,
+  experimental: {
+    optimizePackageImports: ['lucide-react']
+  }
 }
 
 module.exports = nextConfig

@@ -80,6 +80,32 @@ export function useJobs(companyId?: string) {
     }
   }
 
+  const deleteJob = async (id: string) => {
+    try {
+      // 1. 删除该岗位下的匹配结果
+      await supabase
+        .from("match_results")
+        .delete()
+        .eq("job_id", id)
+
+      // 2. 删除该岗位下的候选人
+      await supabase
+        .from("candidates")
+        .delete()
+        .eq("job_id", id)
+
+      // 3. 删除岗位本身
+      await supabase
+        .from("jobs")
+        .delete()
+        .eq("id", id)
+
+      await fetchJobs()
+    } catch (error) {
+      console.error("Failed to delete job:", error)
+    }
+  }
+
   const createJob = async (jobData: {
     title: string
     jd_text: string
@@ -109,7 +135,7 @@ export function useJobs(companyId?: string) {
     fetchJobs()
   }, [companyId])
 
-  return { jobs, loading, fetchJobs, toggleJobStatus, createJob }
+  return { jobs, loading, fetchJobs, toggleJobStatus, createJob, deleteJob }
 }
 
 export function useJobDetail(id: string) {
