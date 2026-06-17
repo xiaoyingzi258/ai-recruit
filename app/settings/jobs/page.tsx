@@ -281,7 +281,7 @@ export default function JobsPage() {
                   {filteredJobs.map((job: any) => (
                     <tr key={job.id} className="hover:bg-gray-50/70 transition-colors">
                       <td className="px-4 py-4">
-                        <span className="font-medium text-[#1C1E3A]">
+                        <span className={`font-medium ${job.status === "open" ? "text-[#1C1E3A]" : "text-gray-400"}`}>
                           {job.title}
                         </span>
                       </td>
