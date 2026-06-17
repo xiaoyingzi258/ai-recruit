@@ -3,10 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { ChevronDown, ChevronRight, Star, AlertTriangle, RefreshCw, Download, AlertCircle, X } from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/contexts/auth-context'
-
-const supabase = createClient()
 
 type TabType = 'fraud' | 'tech' | 'soft'
 
@@ -82,44 +79,42 @@ export default function InterviewPage() {
     try {
       setLoading(true)
 
-      const { data: candidateRows } = await supabase
-        .from('candidates')
-        .select('*')
-        .eq('id', candidateId)
-        .limit(1)
-
-      if (!candidateRows || candidateRows.length === 0) {
+      const candidateRes = await fetch('/api/candidates/' + candidateId)
+      if (!candidateRes.ok) {
+        const errText = await candidateRes.text()
+        throw new Error(errText || '加载候选人失败')
+      }
+      const candidateResult = await candidateRes.json()
+      if (!candidateResult.success || !candidateResult.data) {
         setLoading(false)
         return
       }
 
-      const candidateData = candidateRows[0]
+      const candidateData = candidateResult.data
       setCandidate(candidateData)
 
       // 根据候选人记录的 job_id 加载独立的岗位信息
       let jobData: Job | null = null
       if (candidateData.job_id) {
-        const { data: jobRows } = await supabase
-          .from('jobs')
-          .select('id, title, jd_text')
-          .eq('id', candidateData.job_id)
-          .limit(1)
-
-        if (jobRows && jobRows.length > 0) {
-          jobData = jobRows[0]
-          setCandidateJob(jobData)
+        const jobRes = await fetch('/api/jobs/' + candidateData.job_id)
+        if (jobRes.ok) {
+          const jobResult = await jobRes.json()
+          if (jobResult.success && jobResult.data) {
+            jobData = jobResult.data
+            setCandidateJob(jobData)
+          }
         }
       }
 
-      const { data: questionsRows } = await supabase
-        .from('interview_questions')
-        .select('*')
-        .eq('candidate_id', candidateId)
-        .limit(1)
-
-      if (questionsRows && questionsRows.length > 0) {
-        const questionsData = questionsRows[0]
-        setQuestions(questionsData)
+      const questionsRes = await fetch('/api/candidates/' + candidateId + '/questions')
+      if (questionsRes.ok) {
+        const questionsResult = await questionsRes.json()
+        if (questionsResult.success && questionsResult.data) {
+          setQuestions(questionsResult.data)
+        } else if (!questionsRequestedRef.current) {
+          questionsRequestedRef.current = true
+          await generateInterviewQuestions(candidateData, false, jobData)
+        }
       } else if (!questionsRequestedRef.current) {
         questionsRequestedRef.current = true
         await generateInterviewQuestions(candidateData, false, jobData)

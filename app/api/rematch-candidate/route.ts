@@ -1,9 +1,71 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { query, queryOne } from '@/lib/db'
 import { CozeAPI } from '@coze/api'
+
+function deepParseJSON(value: any): any {
+  if (value === null || value === undefined) return value
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (trimmed.length === 0) return null
+    const firstChar = trimmed.charAt(0)
+    if (firstChar === '{' || firstChar === '[' || firstChar === '"') {
+      try {
+        const parsed = JSON.parse(trimmed)
+        return deepParseJSON(parsed)
+      } catch {
+        return value
+      }
+    }
+    return value
+  }
+  if (Array.isArray(value)) {
+    return value.map(item => deepParseJSON(item))
+  }
+  if (typeof value === 'object') {
+    const result: Record<string, any> = {}
+    for (const key of Object.keys(value)) {
+      result[key] = deepParseJSON(value[key])
+    }
+    return result
+  }
+  return value
+}
+
+function toJSONObjectForPG(value: any): Record<string, any> {
+  if (value === null || value === undefined) return {}
+  const parsed = deepParseJSON(value)
+  if (parsed === null || parsed === undefined) return {}
+  if (typeof parsed === 'object' && !Array.isArray(parsed)) {
+    return parsed
+  }
+  if (Array.isArray(parsed)) {
+    return { data: parsed }
+  }
+  return { text: String(parsed) }
+}
+
+function serializeForJSON(value: any): string {
+  try {
+    const cleaned = deepParseJSON(value)
+    const str = JSON.stringify(cleaned ?? null)
+    JSON.parse(str)
+    return str
+  } catch (e) {
+    console.warn('[serializeForJSON] 序列化失败:', e, '原始值:', typeof value, String(value).substring(0, 200))
+    return JSON.stringify({ text: String(value ?? '').substring(0, 10000) })
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
+    const session = await getServerSession(authOptions)
+    if (!session?.user) {
+      return NextResponse.json({ error: '未授权' }, { status: 401 })
+    }
+    const companyId = session.user.company_id
+
     const body = await request.json()
     const { candidate_id, job_description } = body
 
@@ -14,38 +76,40 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const supabase = createClient()
-    
-    // 1. 获取候选人信息
-    const { data: candidate, error: candidateError } = await supabase
-      .from('candidates')
-      .select('*')
-      .eq('id', candidate_id)
-      .single()
+    const candidate = await queryOne<any>(
+      `SELECT * FROM candidates WHERE id = $1 AND company_id = $2`,
+      [candidate_id, companyId]
+    )
 
-    if (candidateError) {
-      throw candidateError
+    if (!candidate) {
+      return NextResponse.json(
+        { error: '找不到候选人信息' },
+        { status: 404 }
+      )
     }
 
-    if (!candidate.parsed_data) {
+    const cleanParsedData = deepParseJSON(candidate.parsed_data)
+    if (!cleanParsedData) {
       return NextResponse.json(
         { error: '候选人缺少解析后的数据' },
         { status: 400 }
       )
     }
 
-    // 2. 调用整合的工作流
     const coze = new CozeAPI({
       token: process.env.COZE_API_KEY || '',
       baseURL: 'https://api.coze.cn'
     })
 
     console.log('[rematch-candidate] 开始重新计算匹配度...')
+    const resumeDataStr = candidate.raw_text || JSON.stringify(cleanParsedData)
+    console.log('[rematch-candidate] resume_data 长度:', resumeDataStr.length)
+
     const stream = await coze.workflows.runs.stream({
       workflow_id: '7642566426397655059',
-      parameters: { 
-        resume_data: candidate.raw_text || JSON.stringify(candidate.parsed_data), 
-        jd_text: job_description 
+      parameters: {
+        resume_data: resumeDataStr,
+        jd_text: job_description
       }
     })
 
@@ -57,57 +121,99 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    console.log('[rematch-candidate] Coze 返回结果长度:', result.length)
+    console.log('[rematch-candidate] Coze 返回前300字:', result.substring(0, 300))
+
     let resultData: any = null
     let matchData: any = null
     try {
       resultData = JSON.parse(result)
-      if (resultData.output) {
-        resultData = resultData.output
-      } else if (resultData.data) {
-        resultData = resultData.data
-      } else if (resultData.result) {
-        resultData = resultData.result
+      console.log('[rematch-candidate] 初步解析后类型:', typeof resultData, 'keys:', resultData && typeof resultData === 'object' ? Object.keys(resultData) : 'non-object')
+      const cleanResult = deepParseJSON(resultData)
+      if (cleanResult && typeof cleanResult === 'object' && cleanResult.output !== undefined && cleanResult.output !== null) {
+        resultData = deepParseJSON(cleanResult.output)
+      } else if (cleanResult && typeof cleanResult === 'object' && cleanResult.data !== undefined && cleanResult.data !== null) {
+        resultData = deepParseJSON(cleanResult.data)
+      } else if (cleanResult && typeof cleanResult === 'object' && cleanResult.result !== undefined && cleanResult.result !== null) {
+        resultData = deepParseJSON(cleanResult.result)
+      } else {
+        resultData = cleanResult
       }
-      matchData = resultData.match || resultData
+      matchData = resultData && typeof resultData === 'object' && resultData.match ? resultData.match : resultData
+      matchData = deepParseJSON(matchData) || { raw_result: result }
+      console.log('[rematch-candidate] matchData keys:', matchData && typeof matchData === 'object' ? Object.keys(matchData) : 'null')
     } catch (e) {
+      console.warn('[rematch-candidate] JSON 解析失败:', e)
       matchData = { raw_result: result }
     }
 
-    // 3. 更新 match_results 表
-    const { error: matchUpdateError } = await supabase
-      .from('match_results')
-      .update({
-        total_score: matchData.total_score || 0,
-        hard_condition: matchData.hard_condition || {},
-        tech_skill: matchData.tech_skill || {},
-        project_exp: matchData.project_exp || {},
-        risk_penalty: matchData.risk_penalty || {},
-        risk_block: matchData.risk_block || null,
-        updated_at: new Date().toISOString()
-      })
-      .eq('candidate_id', candidate_id)
+    const cleanMatchData = deepParseJSON(matchData) || {}
+    const safeHardCondition = toJSONObjectForPG(cleanMatchData.hard_condition)
+    const safeTechSkill = toJSONObjectForPG(cleanMatchData.tech_skill)
+    const safeProjectExp = toJSONObjectForPG(cleanMatchData.project_exp)
+    const safeRiskPenalty = toJSONObjectForPG(cleanMatchData.risk_penalty)
+    const safeRiskBlock = cleanMatchData.risk_block ? toJSONObjectForPG(cleanMatchData.risk_block) : null
 
-    if (matchUpdateError) {
-      throw matchUpdateError
+    const jsonHardCondition = serializeForJSON(safeHardCondition)
+    const jsonTechSkill = serializeForJSON(safeTechSkill)
+    const jsonProjectExp = serializeForJSON(safeProjectExp)
+    const jsonRiskPenalty = serializeForJSON(safeRiskPenalty)
+    const jsonRiskBlock = safeRiskBlock ? serializeForJSON(safeRiskBlock) : serializeForJSON(null)
+
+    console.log('[rematch-candidate] 更新 match_results 的 JSON 字段:')
+    console.log('  total_score:', cleanMatchData.total_score || 0)
+    console.log('  hard_condition(json str):', jsonHardCondition.substring(0, 150))
+    console.log('  tech_skill(json str):', jsonTechSkill.substring(0, 150))
+    console.log('  project_exp(json str):', jsonProjectExp.substring(0, 150))
+    console.log('  risk_penalty(json str):', jsonRiskPenalty.substring(0, 150))
+    console.log('  risk_block(json str):', jsonRiskBlock.substring(0, 150))
+    console.log('  risk_tag:', cleanMatchData.risk_tag || '')
+
+    const matchUpdateResult = await queryOne<any>(
+      `UPDATE match_results SET
+        total_score = $1,
+        hard_condition = $2::json,
+        tech_skill = $3::json,
+        project_exp = $4::json,
+        risk_penalty = $5::json,
+        risk_block = $6::json
+      WHERE candidate_id = $7
+      RETURNING *`,
+      [
+        cleanMatchData.total_score || 0,
+        jsonHardCondition,
+        jsonTechSkill,
+        jsonProjectExp,
+        jsonRiskPenalty,
+        jsonRiskBlock,
+        candidate_id
+      ]
+    )
+
+    if (!matchUpdateResult) {
+      throw new Error('更新匹配结果失败')
     }
 
-    // 4. 更新 candidates 表的 risk_tag
-    const { error: candidateUpdateError } = await supabase
-      .from('candidates')
-      .update({
-        risk_tag: matchData.risk_tag || '',
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', candidate_id)
+    const candidateUpdateResult = await queryOne<any>(
+      `UPDATE candidates SET
+        risk_tag = $1
+      WHERE id = $2 AND company_id = $3
+      RETURNING *`,
+      [
+        cleanMatchData.risk_tag || '',
+        candidate_id,
+        companyId
+      ]
+    )
 
-    if (candidateUpdateError) {
-      throw candidateUpdateError
+    if (!candidateUpdateResult) {
+      throw new Error('更新候选人风险标签失败')
     }
 
     return NextResponse.json({
       success: true,
       data: {
-        match: matchData
+        match: cleanMatchData
       }
     })
 

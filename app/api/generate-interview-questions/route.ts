@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { query, queryOne, getClient } from '@/lib/db'
+import { v4 as uuidv4 } from 'uuid'
 import { CozeAPI } from '@coze/api'
 
 function extractQuestionsArray(raw: any, keys: string[]): any[] {
@@ -91,6 +94,12 @@ function extractJSON(text: string): any {
 
 export async function POST(request: NextRequest) {
   try {
+    const session = await getServerSession(authOptions)
+    if (!session?.user) {
+      return NextResponse.json({ error: '未授权' }, { status: 401 })
+    }
+    const companyId = session.user.company_id
+
     const body = await request.json()
     const { candidate_id, job_id, job_description, force } = body
 
@@ -101,8 +110,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const supabase = createClient()
-
     console.log('\n========== [generate-interview-questions] 开始 ==========')
     console.log('candidate_id:', candidate_id)
     console.log('job_id:', job_id)
@@ -112,20 +119,19 @@ export async function POST(request: NextRequest) {
     // ---- 缓存检查 ----
     if (!force) {
       console.log('[阶段 1] 检查缓存...')
-      const { data: existingQuestions, error: existingError } = await supabase
-        .from('interview_questions')
-        .select('*')
-        .eq('candidate_id', candidate_id)
+      const existingQuestions = await queryOne<any>(
+        `SELECT * FROM interview_questions WHERE candidate_id = $1 LIMIT 1`,
+        [candidate_id]
+      )
 
-      if (existingQuestions && existingQuestions.length > 0) {
-        const first = existingQuestions[0]
-        const fraudCount = Array.isArray(first.fraud_questions) ? first.fraud_questions.length : 0
-        const techCount = Array.isArray(first.tech_questions) ? first.tech_questions.length : 0
-        const softCount = Array.isArray(first.soft_questions) ? first.soft_questions.length : 0
+      if (existingQuestions) {
+        const fraudCount = Array.isArray(existingQuestions.fraud_questions) ? existingQuestions.fraud_questions.length : 0
+        const techCount = Array.isArray(existingQuestions.tech_questions) ? existingQuestions.tech_questions.length : 0
+        const softCount = Array.isArray(existingQuestions.soft_questions) ? existingQuestions.soft_questions.length : 0
 
         if (fraudCount > 0 || techCount > 0 || softCount > 0) {
           console.log(`  ✅ 命中有效缓存: fraud=${fraudCount}, tech=${techCount}, soft=${softCount}`)
-          return NextResponse.json({ success: true, data: first, from_cache: true })
+          return NextResponse.json({ success: true, data: existingQuestions, from_cache: true })
         } else {
           console.log('  ⚠️  缓存存在但内容为空，需要重新生成')
         }
@@ -138,32 +144,25 @@ export async function POST(request: NextRequest) {
 
     // ---- 获取候选人信息 ----
     console.log('[阶段 2] 查询候选人信息...')
-    const { data: candidate, error: candidateError } = await supabase
-      .from('candidates')
-      .select('*')
-      .eq('id', candidate_id)
-      .limit(1)
+    const candidate = await queryOne<any>(
+      `SELECT * FROM candidates WHERE id = $1 AND company_id = $2 LIMIT 1`,
+      [candidate_id, companyId]
+    )
 
-    if (candidateError) {
-      throw new Error('候选人查询失败: ' + candidateError.message)
-    }
-
-    if (!candidate || candidate.length === 0) {
+    if (!candidate) {
       return NextResponse.json({ error: '候选人不存在' }, { status: 404 })
     }
 
-    const candidateData = candidate[0]
-
-    if (!candidateData.parsed_data) {
+    if (!candidate.parsed_data) {
       return NextResponse.json({ error: '候选人缺少解析后的数据 (parsed_data)' }, { status: 400 })
     }
 
-    console.log('  ✅ 候选人:', candidateData.name)
-    console.log('  parsed_data 类型:', typeof candidateData.parsed_data)
+    console.log('  ✅ 候选人:', candidate.name)
+    console.log('  parsed_data 类型:', typeof candidate.parsed_data)
 
-    const resumeDataStr = typeof candidateData.parsed_data === 'string'
-      ? candidateData.parsed_data
-      : JSON.stringify(candidateData.parsed_data)
+    const resumeDataStr = typeof candidate.parsed_data === 'string'
+      ? candidate.parsed_data
+      : JSON.stringify(candidate.parsed_data)
 
     console.log('  resume_data (传给 Coze 的参数) 长度:', resumeDataStr.length)
     console.log('  resume_data 前 200 字:', resumeDataStr.slice(0, 200))
@@ -274,7 +273,7 @@ export async function POST(request: NextRequest) {
       console.log('  interviewResult 后 500 字:', interviewResult.slice(-500))
     }
 
-    // 额外清理：如果开头是 }{ 或 }{\"，说明有多个 JSON 对象拼接，找到第一个完整对象的结尾
+    // 额外清理：如果开头是 }{ 或 }{", 说明有多个 JSON 对象拼接，找到第一个完整对象的结尾
     // 更稳妥的做法：去掉所有前缀的空 {}，从第一个真正的 { 开始
     if (interviewResult) {
       const cleaned = interviewResult.replace(/^[\s{}]+/, '')
@@ -497,45 +496,43 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // ---- 写入数据库 (先 DELETE 旧记录，再 INSERT 新记录) ----
+    // ---- 写入数据库 (事务：DELETE 旧记录 + INSERT 新记录) ----
     console.log('[阶段 7] 写入数据库 (DELETE + INSERT)...')
 
     let savedRecord: any = null
 
+    const client = await getClient()
     try {
-      // 先删除该 candidate_id 的旧记录
-      const { error: deleteErr } = await supabase
-        .from('interview_questions')
-        .delete()
-        .eq('candidate_id', candidate_id)
+      await client.query('BEGIN')
 
-      if (deleteErr) {
-        console.warn('  ⚠️  DELETE 旧记录失败 (可能无旧记录):', deleteErr.message)
-      } else {
-        console.log('  ✅ 已删除 candidate_id=' + candidate_id + ' 的旧记录')
-      }
+      // 先删除该 candidate_id 的旧记录
+      await client.query(
+        `DELETE FROM interview_questions WHERE candidate_id = $1`,
+        [candidate_id]
+      )
+      console.log('  ✅ 已删除 candidate_id=' + candidate_id + ' 的旧记录')
 
       // 插入新记录
-      const { data: inserted, error: insertErr } = await supabase
-        .from('interview_questions')
-        .insert({
+      const { rows } = await client.query(
+        `INSERT INTO interview_questions (
+          id, candidate_id, job_id, fraud_questions, tech_questions, soft_questions, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW()) RETURNING *`,
+        [
+          uuidv4(),
           candidate_id,
           job_id,
-          fraud_questions: normalizedFraud,
-          tech_questions: normalizedTech,
-          soft_questions: normalizedSoft
-        })
-        .select()
-        .single()
+          normalizedFraud,
+          normalizedTech,
+          normalizedSoft
+        ]
+      )
 
-      if (insertErr) {
-        console.error('  ❌ INSERT 失败:', insertErr)
-        throw new Error('数据库写入失败: ' + insertErr.message)
-      }
-
-      savedRecord = inserted
+      savedRecord = rows[0]
       console.log('  ✅ INSERT 成功, record id:', savedRecord.id)
+
+      await client.query('COMMIT')
     } catch (dbErr: any) {
+      await client.query('ROLLBACK')
       console.warn('  ⚠️  DB 写入异常，使用内存数据返回:', dbErr?.message)
       savedRecord = {
         id: 'temp-' + Date.now(),
@@ -545,6 +542,8 @@ export async function POST(request: NextRequest) {
         tech_questions: normalizedTech,
         soft_questions: normalizedSoft
       }
+    } finally {
+      client.release()
     }
 
     console.log('========== [generate-interview-questions] 完成 ✅ ==========\n')

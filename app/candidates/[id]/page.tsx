@@ -3,10 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter, useParams, useSearchParams } from 'next/navigation'
 import { User, AlertTriangle, Play, Activity, RefreshCw } from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/contexts/auth-context'
-
-const supabase = createClient()
 
 type Candidate = {
   id: string
@@ -58,49 +55,74 @@ export default function CandidateDetailPage() {
     try {
       setLoading(true)
 
-      const { data: candidateRows } = await supabase
-        .from('candidates')
-        .select('*')
-        .eq('id', candidateId)
-        .limit(1)
-
-      if (!candidateRows || candidateRows.length === 0) {
+      console.log('[候选人详情] 开始加载候选人 ID:', candidateId)
+      const candidateRes = await fetch('/api/candidates/' + candidateId)
+      if (!candidateRes.ok) {
+        const errText = await candidateRes.text()
+        throw new Error(errText || '加载候选人失败')
+      }
+      const candidateResult = await candidateRes.json()
+      if (!candidateResult.success || !candidateResult.data) {
+        console.log('[候选人详情] 候选人数据为空')
         setLoading(false)
         return
       }
-
-      const candidateData = candidateRows[0]
+      const candidateData = candidateResult.data
+      console.log('[候选人详情] 候选人数据:', JSON.stringify(candidateData, null, 2))
       setCandidate(candidateData)
 
       // 根据候选人记录的 job_id 加载独立的岗位信息（不依赖页面顶部的岗位选择器）
       let jobData: Job | null = null
       if (candidateData.job_id) {
-        const { data: jobRows } = await supabase
-          .from('jobs')
-          .select('id, title, jd_text')
-          .eq('id', candidateData.job_id)
-          .limit(1)
+        console.log('[候选人详情] 候选人记录了 job_id:', candidateData.job_id, '正在加载岗位...')
+        const jobRes = await fetch('/api/jobs/' + candidateData.job_id)
+        if (jobRes.ok) {
+          const jobResult = await jobRes.json()
+          if (jobResult.success && jobResult.data) {
+            jobData = jobResult.data
+            setCandidateJob(jobData)
+            console.log('[候选人详情] 岗位加载成功:', jobData.title)
+          } else {
+            console.log('[候选人详情] 岗位 API 返回失败:', jobResult.error)
+          }
+        } else {
+          console.log('[候选人详情] 岗位 API 请求失败:', jobRes.status)
+        }
+      } else {
+        console.log('[候选人详情] 候选人记录中 job_id 为空或 undefined')
+      }
 
-        if (jobRows && jobRows.length > 0) {
-          jobData = jobRows[0]
-          setCandidateJob(jobData)
+      // 如果没有从候选人记录获取到岗位，尝试从所有岗位中找一个作为备选
+      if (!jobData) {
+        console.log('[候选人详情] 尝试从岗位列表获取备选岗位...')
+        const jobsRes = await fetch('/api/jobs')
+        if (jobsRes.ok) {
+          const jobsResult = await jobsRes.json()
+          if (jobsResult.success && jobsResult.data && jobsResult.data.length > 0) {
+            jobData = jobsResult.data[0]
+            setCandidateJob(jobData)
+            console.log('[候选人详情] 使用首个备选岗位:', jobData.title)
+          }
         }
       }
 
-      const { data: analysisRows } = await supabase
-        .from('analysis_results')
-        .select('*')
-        .eq('candidate_id', candidateId)
-        .limit(1)
-
-      if (analysisRows && analysisRows.length > 0) {
-        const analysisData = analysisRows[0]
-        setAnalysis(analysisData)
+      console.log('[候选人详情] 尝试加载分析数据...')
+      const analysisRes = await fetch('/api/candidates/' + candidateId + '/analysis')
+      if (analysisRes.ok) {
+        const analysisResult = await analysisRes.json()
+        if (analysisResult.success && analysisResult.data) {
+          console.log('[候选人详情] 已有缓存分析数据')
+          setAnalysis(analysisResult.data)
+        } else if (!analysisRequestedRef.current) {
+          console.log('[候选人详情] 无缓存分析数据，开始生成...')
+          analysisRequestedRef.current = true
+          await generateAnalysis(candidateData, jobData)
+        }
       } else if (!analysisRequestedRef.current) {
+        console.log('[候选人详情] 分析 API 请求失败，开始生成...')
         analysisRequestedRef.current = true
         await generateAnalysis(candidateData, jobData)
       }
-
     } catch (error) {
       console.error('加载候选人数据失败:', error)
     } finally {
@@ -110,14 +132,17 @@ export default function CandidateDetailPage() {
 
   const generateAnalysis = async (candidateData: Candidate, jobData?: Job | null) => {
     const activeJob = jobData || candidateJob
+    console.log('[候选人详情] generateAnalysis - candidateJob:', candidateJob, '传入 jobData:', jobData, '最终 activeJob:', activeJob)
     if (!activeJob || !profile?.company_id) {
-      alert('请先选择一个岗位')
+      console.warn('[候选人详情] 没有可用的岗位信息，无法进行深度解析! activeJob:', !!activeJob, 'company_id:', !!profile?.company_id)
+      alert('请先创建并选择一个岗位')
       return
     }
 
     setAnalyzing(true)
 
     try {
+      console.log('[候选人详情] 调用深度解析 API - candidate_id:', candidateId, 'job_id:', activeJob.id, 'jd_text 长度:', activeJob.jd_text?.length)
       const response = await fetch('/api/analyze-candidate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -131,8 +156,10 @@ export default function CandidateDetailPage() {
       const result = await response.json()
 
       if (result.success) {
+        console.log('[候选人详情] 深度解析成功')
         setAnalysis(result.data)
       } else {
+        console.error('[候选人详情] 深度解析失败:', result.error)
         alert('深度解析失败: ' + result.error)
       }
 
@@ -146,14 +173,17 @@ export default function CandidateDetailPage() {
 
   const handleRegenerate = async () => {
     const activeJob = candidateJob
+    console.log('[候选人详情] handleRegenerate - candidateJob:', candidateJob)
     if (!activeJob || !profile?.company_id) {
-      alert('请先选择一个岗位')
+      console.warn('[候选人详情] 重新生成 - 没有可用的岗位信息')
+      alert('请先创建并选择一个岗位')
       return
     }
 
     setRegenerating(true)
 
     try {
+      console.log('[候选人详情] 调用重新生成深度解析 API...')
       const response = await fetch('/api/analyze-candidate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -168,8 +198,10 @@ export default function CandidateDetailPage() {
       const result = await response.json()
 
       if (result.success) {
+        console.log('[候选人详情] 重新生成成功')
         setAnalysis(result.data)
       } else {
+        console.error('[候选人详情] 重新生成失败:', result.error)
         alert('重新生成失败: ' + result.error)
       }
     } catch (error) {

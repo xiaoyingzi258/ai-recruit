@@ -3,12 +3,9 @@
 import { useState, useEffect, Fragment, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { Search, Upload, Users, Sparkles, Trash2, Eye, ChevronLeft, ChevronRight, RefreshCw, Loader2, CheckCircle, XCircle, AlertCircle, X, Archive } from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/contexts/auth-context'
 import { useJobs } from '@/hooks/use-jobs'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
-
-const supabase = createClient()
 
 const skillColors = [
   'bg-blue-100 text-blue-600',
@@ -149,39 +146,20 @@ export default function CandidatesPage() {
         return
       }
 
-      const { data: candidatesData, error: candidatesError } = await supabase
-        .from('candidates')
-        .select('*')
-        .eq('company_id', profile.company_id)
-        .eq('job_id', selectedJob.id)
-        .order('created_at', { ascending: false })
-
-      if (candidatesError) {
-        console.error('加载候选人失败:', candidatesError)
-        throw candidatesError
+      const res = await fetch(`/api/candidates?company_id=${profile.company_id}&job_id=${selectedJob.id}`)
+      if (!res.ok) {
+        const errText = await res.text()
+        throw new Error(errText || '加载候选人失败')
       }
+      const result = await res.json()
+      if (!result.success) {
+        throw new Error(result.error || '加载候选人失败')
+      }
+      const candidatesData = result.data || []
 
       if (!candidatesData || candidatesData.length === 0) {
         setCandidates([])
         return
-      }
-
-      const { data: matchResults, error: matchError } = await supabase
-        .from('match_results')
-        .select('candidate_id, total_score')
-        .eq('job_id', selectedJob.id)
-        .in('candidate_id', candidatesData.map(c => c.id))
-
-      if (matchError) {
-        console.error('加载匹配结果失败:', matchError)
-        throw matchError
-      }
-
-      const matchMap = new Map<string, number>()
-      if (matchResults) {
-        matchResults.forEach((m: { candidate_id: string; total_score: number }) => {
-          matchMap.set(m.candidate_id, m.total_score)
-        })
       }
 
       const mapped: CandidateWithMatch[] = candidatesData.map((c: any) => ({
@@ -193,7 +171,7 @@ export default function CandidatesPage() {
         salary_expectation: c.salary_expectation,
         status: c.status,
         parsed_data: c.parsed_data,
-        match_score: matchMap.get(c.id)
+        match_score: c.match_score
       }))
 
       setCandidates(mapped)
@@ -394,12 +372,19 @@ export default function CandidatesPage() {
 
   const removeCandidate = async (id: string) => {
     try {
-      const { error } = await supabase
-        .from('candidates')
-        .update({ status: 'removed' })
-        .eq('id', id)
-
-      if (error) throw error
+      const res = await fetch('/api/candidates/' + id, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'removed' })
+      })
+      if (!res.ok) {
+        const errText = await res.text()
+        throw new Error(errText || '操作失败')
+      }
+      const result = await res.json()
+      if (!result.success) {
+        throw new Error(result.error || '操作失败')
+      }
       await loadData()
       showToastMessage('候选人已移除', 'success')
     } catch (error) {
@@ -410,12 +395,19 @@ export default function CandidatesPage() {
 
   const restoreCandidate = async (id: string) => {
     try {
-      const { error } = await supabase
-        .from('candidates')
-        .update({ status: 'shortlisted' })
-        .eq('id', id)
-
-      if (error) throw error
+      const res = await fetch('/api/candidates/' + id, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'shortlisted' })
+      })
+      if (!res.ok) {
+        const errText = await res.text()
+        throw new Error(errText || '操作失败')
+      }
+      const result = await res.json()
+      if (!result.success) {
+        throw new Error(result.error || '操作失败')
+      }
       await loadData()
       showToastMessage('候选人已恢复', 'success')
     } catch (error) {
@@ -426,19 +418,15 @@ export default function CandidatesPage() {
 
   const deleteCandidate = async (id: string) => {
     try {
-      const { error: matchError } = await supabase
-        .from('match_results')
-        .delete()
-        .eq('candidate_id', id)
-
-      if (matchError) throw matchError
-
-      const { error } = await supabase
-        .from('candidates')
-        .delete()
-        .eq('id', id)
-
-      if (error) throw error
+      const res = await fetch('/api/candidates/' + id, { method: 'DELETE' })
+      if (!res.ok) {
+        const errText = await res.text()
+        throw new Error(errText || '删除失败')
+      }
+      const result = await res.json()
+      if (!result.success) {
+        throw new Error(result.error || '删除失败')
+      }
       await loadData()
       showToastMessage('候选人已删除', 'success')
     } catch (error) {

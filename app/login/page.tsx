@@ -2,11 +2,13 @@
 
 import { useState } from "react"
 import { Sparkles, Eye, EyeOff, Loader2 } from "lucide-react"
-import { createClient } from "@/lib/supabase/client"
+import { signIn } from "next-auth/react"
+import { useRouter } from "next/navigation"
 
 type TabType = "login" | "register"
 
 export default function LoginPage() {
+  const router = useRouter()
   const [tab, setTab] = useState<TabType>("login")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
@@ -22,25 +24,28 @@ export default function LoginPage() {
   const [regEmail, setRegEmail] = useState("")
   const [regPassword, setRegPassword] = useState("")
 
-  const supabase = createClient()
-
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError('')
-    
-    console.log('开始登录...')
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
-    
-    if (error) {
-      console.log('登录失败:', error.message)
-      setError(error.message)
+
+    try {
+      const result = await signIn('credentials', {
+        email,
+        password,
+        redirect: false,
+      })
+
+      if (result?.error) {
+        setError(result.error === 'CredentialsSignin' ? '邮箱或密码错误' : result.error)
+        setLoading(false)
+      } else {
+        router.push('/candidates')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '登录异常')
       setLoading(false)
     }
-    // 成功了 AuthProvider 会自动跳转，这里什么都不用做！
   }
 
   const handleRegister = async (e: React.FormEvent) => {
@@ -49,23 +54,39 @@ export default function LoginPage() {
     setError('')
 
     try {
-      const { error } = await supabase.auth.signUp({
-        email: regEmail,
-        password: regPassword,
-        options: {
-          data: {
-            name: name,  // 把用户名传给 Auth 的 meta_data
-            company_name: companyName  // 把企业名称也传过去
-          }
-        }
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: regEmail,
+          password: regPassword,
+          name: name,
+          companyName: companyName,
+        })
       })
 
-      if (error) {
-        setError(error.message)
+      const data = await res.json()
+
+      if (!res.ok) {
+        setError(data.error || '注册失败')
         setLoading(false)
+        return
       }
-      // 触发器会自动创建 companies 和 users 表记录！
-      // 登录成功后 AuthProvider 会自动跳转
+
+      // 注册成功后自动登录
+      const result = await signIn('credentials', {
+        email: regEmail,
+        password: regPassword,
+        redirect: false,
+      })
+
+      if (result?.error) {
+        setError('注册成功但登录失败，请手动登录')
+        setTab('login')
+        setLoading(false)
+      } else {
+        router.push('/candidates')
+      }
 
     } catch (err) {
       setError(err instanceof Error ? err.message : '注册异常')

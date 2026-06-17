@@ -1,37 +1,24 @@
 "use client"
 
 import { useState, useCallback } from "react"
-import { createClient } from "@/lib/supabase/client"
-import type { Database } from "@/types/supabase"
-
-type AnalysisResultRow = Database["public"]["Tables"]["analysis_results"]["Row"]
-type AnalysisResultInsert = Database["public"]["Tables"]["analysis_results"]["Insert"]
-type AnalysisResultUpdate = Database["public"]["Tables"]["analysis_results"]["Update"]
+import type { AnalysisResult } from "@/types/database"
 
 export function useAnalysis() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const supabase = createClient()
 
-  const insertAnalysis = useCallback(async (data: Omit<AnalysisResultInsert, "id" | "created_at" | "updated_at"> & { id?: string }) => {
+  const insertAnalysis = useCallback(async (data: Omit<AnalysisResult, "id" | "created_at" | "updated_at"> & { id?: string }) => {
     setLoading(true)
     setError(null)
     try {
-      const { data: result, error: insertError } = await supabase
-        .from("analysis_results")
-        .upsert({
-          candidate_id: data.candidate_id,
-          job_id: data.job_id,
-          summary: data.summary,
-          risk_warnings: data.risk_warnings,
-          tech_translation: data.tech_translation,
-          skill_match: data.skill_match || [],
-        }, { onConflict: "candidate_id" })
-        .select()
-        .single()
-
-      if (insertError) throw insertError
-      return result as AnalysisResultRow
+      const res = await fetch("/api/analyze-candidate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      })
+      if (!res.ok) throw new Error("插入解析结果失败")
+      const { data: result } = await res.json()
+      return result as AnalysisResult
     } catch (err) {
       const message = err instanceof Error ? err.message : "插入解析结果失败"
       setError(message)
@@ -39,25 +26,21 @@ export function useAnalysis() {
     } finally {
       setLoading(false)
     }
-  }, [supabase])
+  }, [])
 
   const getAnalysisByCandidateId = useCallback(async (candidateId: string) => {
     setLoading(true)
     setError(null)
     try {
-      const { data, error: queryError } = await supabase
-        .from("analysis_results")
-        .select("*")
-        .eq("candidate_id", candidateId)
-        .single()
-
-      if (queryError) {
-        if (queryError.code === "PGRST116") {
+      const res = await fetch(`/api/candidates/${candidateId}/analysis`)
+      if (!res.ok) {
+        if (res.status === 404) {
           return null
         }
-        throw queryError
+        throw new Error("查询解析结果失败")
       }
-      return data as AnalysisResultRow
+      const { data } = await res.json()
+      return data as AnalysisResult
     } catch (err) {
       const message = err instanceof Error ? err.message : "查询解析结果失败"
       setError(message)
@@ -65,21 +48,20 @@ export function useAnalysis() {
     } finally {
       setLoading(false)
     }
-  }, [supabase])
+  }, [])
 
-  const updateAnalysis = useCallback(async (candidateId: string, data: AnalysisResultUpdate) => {
+  const updateAnalysis = useCallback(async (candidateId: string, data: Partial<AnalysisResult>) => {
     setLoading(true)
     setError(null)
     try {
-      const { data: result, error: updateError } = await supabase
-        .from("analysis_results")
-        .update(data)
-        .eq("candidate_id", candidateId)
-        .select()
-        .single()
-
-      if (updateError) throw updateError
-      return result as AnalysisResultRow
+      const res = await fetch("/api/analyze-candidate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...data, force: true }),
+      })
+      if (!res.ok) throw new Error("更新解析结果失败")
+      const { data: result } = await res.json()
+      return result as AnalysisResult
     } catch (err) {
       const message = err instanceof Error ? err.message : "更新解析结果失败"
       setError(message)
@@ -87,7 +69,7 @@ export function useAnalysis() {
     } finally {
       setLoading(false)
     }
-  }, [supabase])
+  }, [])
 
   return {
     insertAnalysis,

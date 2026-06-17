@@ -3,12 +3,9 @@
 import { useState, useEffect } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { ArrowLeft, Sparkles, AlertCircle, CheckCircle, Zap, TrendingUp, RefreshCw, GraduationCap, Clock, Building2 } from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/contexts/auth-context'
 import { useJob } from '@/contexts/job-context'
-import type { AnalysisSummary, AnalysisRiskWarnings, AnalysisTechTranslation, AnalysisSkillMatch } from '@/types/supabase'
-
-const supabase = createClient()
+import type { AnalysisSummary, AnalysisRiskWarnings, AnalysisTechTranslation, AnalysisSkillMatch } from '@/types/database'
 
 type Candidate = {
   id: string
@@ -71,33 +68,30 @@ export default function AnalysisPage() {
     try {
       setLoading(true)
 
-      const { data: candidateRows } = await supabase
-        .from('candidates')
-        .select('*')
-        .eq('id', candidateId)
-        .limit(1)
-
-      if (!candidateRows || candidateRows.length === 0) {
+      const candidateRes = await fetch('/api/candidates/' + candidateId)
+      if (!candidateRes.ok) {
+        const errText = await candidateRes.text()
+        throw new Error(errText || '加载候选人失败')
+      }
+      const candidateResult = await candidateRes.json()
+      if (!candidateResult.success || !candidateResult.data) {
         setLoading(false)
         return
       }
-
-      const candidateData = candidateRows[0]
+      const candidateData = candidateResult.data
       setCandidate(candidateData)
 
-      const { data: existingAnalysisRows } = await supabase
-        .from('analysis_results')
-        .select('*')
-        .eq('candidate_id', candidateId)
-        .limit(1)
-
-      if (existingAnalysisRows && existingAnalysisRows.length > 0) {
-        const existingAnalysis = existingAnalysisRows[0]
-        setHasExistingAnalysis(true)
-        setSummary(existingAnalysis.summary)
-        setRiskWarnings(existingAnalysis.risk_warnings)
-        setTechTranslation(existingAnalysis.tech_translation || [])
-        setSkillMatch(existingAnalysis.skill_match || [])
+      const analysisRes = await fetch('/api/candidates/' + candidateId + '/analysis')
+      if (analysisRes.ok) {
+        const analysisResult = await analysisRes.json()
+        if (analysisResult.success && analysisResult.data) {
+          const existingAnalysis = analysisResult.data
+          setHasExistingAnalysis(true)
+          setSummary(existingAnalysis.summary)
+          setRiskWarnings(existingAnalysis.risk_warnings)
+          setTechTranslation(existingAnalysis.tech_translation || [])
+          setSkillMatch(existingAnalysis.skill_match || [])
+        }
       }
     } catch (error) {
       console.error('加载数据失败:', error)

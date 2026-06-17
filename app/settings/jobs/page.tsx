@@ -296,8 +296,7 @@ export default function JobsPage() {
                       <td className="px-4 py-4 text-sm text-gray-700">{job.candidate_count ?? 0}人</td>
                       <td className="px-4 py-4 text-sm text-gray-500">{formatDate(job.created_at)}</td>
                       <td className="px-4 py-4 text-sm">
-                        <span className="text-[#4AB5A9]">由 {getUpdatedBy(job)}</span>
-                        <span className="text-gray-500"> 更新</span>
+                        <span className="text-[#4AB5A9]">由 {getUpdatedBy(job)} 更新</span>
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex items-center gap-3">

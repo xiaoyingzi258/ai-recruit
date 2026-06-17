@@ -14,7 +14,7 @@ const roles = [
     id: "1",
     name: "系统管理员",
     description: "拥有平台所有模块及AI基础配置的最高权限。",
-    userCount: 2,
+    userCount: 1,
     status: "active",
   },
 ]

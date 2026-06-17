@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { query, queryOne } from '@/lib/db'
+import { v4 as uuidv4 } from 'uuid'
 import { CozeAPI } from '@coze/api'
 
 function extractErrorMessage(err: unknown): string {
@@ -16,8 +19,87 @@ function extractErrorMessage(err: unknown): string {
   return String(err ?? '深度解析失败')
 }
 
+function deepParseJSON(value: any): any {
+  if (value === null || value === undefined) return value
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (trimmed.length === 0) return null
+    const firstChar = trimmed.charAt(0)
+    if (firstChar === '{' || firstChar === '[' || firstChar === '"') {
+      try {
+        const parsed = JSON.parse(trimmed)
+        return deepParseJSON(parsed)
+      } catch {
+        return value
+      }
+    }
+    return value
+  }
+  if (Array.isArray(value)) {
+    return value.map(item => deepParseJSON(item))
+  }
+  if (typeof value === 'object') {
+    const result: Record<string, any> = {}
+    for (const key of Object.keys(value)) {
+      result[key] = deepParseJSON(value[key])
+    }
+    return result
+  }
+  return value
+}
+
+function toJSONObjectForPG(value: any): Record<string, any> {
+  if (value === null || value === undefined) return {}
+  const parsed = deepParseJSON(value)
+  if (parsed === null || parsed === undefined) return {}
+  if (typeof parsed === 'object' && !Array.isArray(parsed)) {
+    return parsed
+  }
+  if (Array.isArray(parsed)) {
+    return { data: parsed }
+  }
+  return { text: String(parsed) }
+}
+
+function toJSONArrayForPG(value: any): any[] {
+  if (value === null || value === undefined) return []
+  const parsed = deepParseJSON(value)
+  if (parsed === null || parsed === undefined) return []
+  if (Array.isArray(parsed)) {
+    return parsed
+  }
+  if (typeof parsed === 'object') {
+    return [parsed]
+  }
+  return [{ text: String(parsed) }]
+}
+
+function cleanJSONForStorage(value: any): any {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'string') return deepParseJSON(value)
+  return deepParseJSON(value)
+}
+
+function serializeForJSON(value: any): string {
+  try {
+    const cleaned = deepParseJSON(value)
+    const str = JSON.stringify(cleaned ?? null)
+    JSON.parse(str)
+    return str
+  } catch (e) {
+    console.warn('[serializeForJSON] 序列化失败:', e, '原始值:', typeof value, String(value).substring(0, 200))
+    return JSON.stringify({ text: String(value ?? '').substring(0, 10000) })
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
+    const session = await getServerSession(authOptions)
+    if (!session?.user) {
+      return NextResponse.json({ error: '未授权' }, { status: 401 })
+    }
+    const companyId = session.user.company_id
+
     const body = await request.json()
     const { candidate_id, job_id, job_description, force } = body
 
@@ -28,45 +110,42 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const supabase = createClient()
-
     if (!force) {
-      const { data: existingAnalysis, error: existingError } = await supabase
-        .from('analysis_results')
-        .select('*')
-        .eq('candidate_id', candidate_id)
-        .limit(1)
+      const existingAnalysis = await queryOne<any>(
+        `SELECT * FROM analysis_results WHERE candidate_id = $1 LIMIT 1`,
+        [candidate_id]
+      )
 
-      if (!existingError && existingAnalysis && existingAnalysis.length > 0) {
+      if (existingAnalysis) {
         return NextResponse.json({
           success: true,
-          data: existingAnalysis[0],
+          data: existingAnalysis,
           from_cache: true
         })
       }
     }
 
     console.log('[analyze-candidate] 步骤1: 获取候选人信息, candidate_id:', candidate_id)
-    const { data: candidateRows, error: candidateError } = await supabase
-      .from('candidates')
-      .select('*')
-      .eq('id', candidate_id)
-      .limit(1)
+    const candidate = await queryOne<any>(
+      `SELECT * FROM candidates WHERE id = $1 AND company_id = $2 LIMIT 1`,
+      [candidate_id, companyId]
+    )
 
-    if (candidateError) {
-      throw candidateError
-    }
-
-    if (!candidateRows || candidateRows.length === 0) {
+    if (!candidate) {
       return NextResponse.json(
         { error: '找不到候选人信息' },
         { status: 404 }
       )
     }
 
-    const candidate = candidateRows[0]
+    console.log('[analyze-candidate] 候选人原始 parsed_data 类型:', typeof candidate.parsed_data)
+    console.log('[analyze-candidate] 候选人原始 parsed_data 前300字:', JSON.stringify(candidate.parsed_data).substring(0, 300))
 
-    if (!candidate.parsed_data) {
+    const cleanParsedData = cleanJSONForStorage(candidate.parsed_data)
+    console.log('[analyze-candidate] 清洗后 parsed_data 类型:', typeof cleanParsedData)
+    console.log('[analyze-candidate] 清洗后 parsed_data 前300字:', JSON.stringify(cleanParsedData).substring(0, 300))
+
+    if (!cleanParsedData || typeof cleanParsedData !== 'object') {
       return NextResponse.json(
         { error: '候选人缺少解析后的数据' },
         { status: 400 }
@@ -79,11 +158,15 @@ export async function POST(request: NextRequest) {
       baseURL: 'https://api.coze.cn'
     })
 
+    const resumeDataStr = JSON.stringify(cleanParsedData)
+    console.log('[analyze-candidate] 传给 Coze 的 resume_data 长度:', resumeDataStr.length)
+    console.log('[analyze-candidate] 传给 Coze 的 jd_text 长度:', job_description.length)
+
     const analyzeStream = await coze.workflows.runs.stream({
       workflow_id: '7642568363239571466',
-      parameters: { 
-        resume_data: JSON.stringify(candidate.parsed_data), 
-        jd_text: job_description 
+      parameters: {
+        resume_data: resumeDataStr,
+        jd_text: job_description
       }
     })
 
@@ -174,12 +257,16 @@ export async function POST(request: NextRequest) {
     let analyzeData: any = null
     try {
       const parsed = parseJSONWithCleanup(analyzeResult)
-      if (parsed && typeof parsed === 'object' && parsed.output !== undefined && parsed.output !== null) {
-        analyzeData = parsed.output
+      console.log('[analyze-candidate] 初步 parse 后类型:', typeof parsed, 'keys:', parsed && typeof parsed === 'object' ? Object.keys(parsed) : '(non-object)')
+      const cleanParsed = deepParseJSON(parsed)
+      console.log('[analyze-candidate] deepParseJSON 后类型:', typeof cleanParsed, 'keys:', cleanParsed && typeof cleanParsed === 'object' ? Object.keys(cleanParsed) : '(non-object)')
+      if (cleanParsed && typeof cleanParsed === 'object' && cleanParsed.output !== undefined && cleanParsed.output !== null) {
+        analyzeData = deepParseJSON(cleanParsed.output)
+        console.log('[analyze-candidate] 使用 output 字段, 类型:', typeof analyzeData, 'keys:', analyzeData && typeof analyzeData === 'object' ? Object.keys(analyzeData) : '(non-object)')
       } else {
-        analyzeData = parsed
+        analyzeData = cleanParsed
       }
-      console.log('[analyze-candidate] JSON 解析成功, top-level keys:', analyzeData ? Object.keys(analyzeData) : 'null')
+      console.log('[analyze-candidate] JSON 解析成功, top-level keys:', analyzeData && typeof analyzeData === 'object' ? Object.keys(analyzeData) : 'null')
     } catch (e) {
       console.warn('[analyze-candidate] JSON 解析失败，尝试用原始结果:', e)
       analyzeData = { raw_result: analyzeResult }
@@ -195,12 +282,13 @@ export async function POST(request: NextRequest) {
 
     console.log('[analyze-candidate] 步骤4: 写入 analysis_results 表...')
     console.log('[analyze-candidate] analyzeData keys:', Object.keys(analyzeData))
-    console.log('[analyze-candidate] analyzeData 完整数据:', JSON.stringify(analyzeData))
+    console.log('[analyze-candidate] analyzeData 完整数据:', JSON.stringify(analyzeData).substring(0, 1000))
 
     const normalizeSkillMatch = (raw: any): any[] => {
       if (!raw) return []
-      if (!Array.isArray(raw)) return []
-      return raw.map((item: any, idx: number) => {
+      const cleanRaw = deepParseJSON(raw)
+      if (!Array.isArray(cleanRaw)) return []
+      return cleanRaw.map((item: any, idx: number) => {
         if (!item || typeof item !== 'object') return item
         console.log(`[analyze-candidate] skill_match[${idx}] 原始字段:`, JSON.stringify(item))
         const skillName =
@@ -237,9 +325,9 @@ export async function POST(request: NextRequest) {
       analyzeData.skill_match || analyzeData.skill_matches ||
       analyzeData.skill_match_comparison || analyzeData.skill_match_comparis ||
       analyzeData.skill_matching || analyzeData.skills || analyzeData.skill_compare
-    console.log('[analyze-candidate] skill_match 原始数据:', JSON.stringify(rawSkillMatch))
+    console.log('[analyze-candidate] skill_match 原始数据:', JSON.stringify(rawSkillMatch).substring(0, 300))
     const normalizedSkillMatch = normalizeSkillMatch(rawSkillMatch)
-    console.log('[analyze-candidate] skill_match 规范化后:', JSON.stringify(normalizedSkillMatch))
+    console.log('[analyze-candidate] skill_match 规范化后:', JSON.stringify(normalizedSkillMatch).substring(0, 300))
 
     const normalizeRiskWarnings = (raw: any): any => {
       if (!raw || typeof raw !== 'object') {
@@ -309,65 +397,116 @@ export async function POST(request: NextRequest) {
     }
 
     const normalizedRiskWarnings = normalizeRiskWarnings(analyzeData.risk_warnings)
-    console.log('[analyze-candidate] risk_warnings 原始数据:', JSON.stringify(analyzeData.risk_warnings))
-    console.log('[analyze-candidate] risk_warnings 规范化后:', JSON.stringify(normalizedRiskWarnings))
+    console.log('[analyze-candidate] risk_warnings 原始数据:', JSON.stringify(analyzeData.risk_warnings).substring(0, 300))
+    console.log('[analyze-candidate] risk_warnings 规范化后:', JSON.stringify(normalizedRiskWarnings).substring(0, 300))
+
+    const safeSummary = toJSONObjectForPG(analyzeData.summary)
+    const safeRiskWarnings = toJSONObjectForPG(normalizedRiskWarnings)
+    const safeTechTranslation = toJSONArrayForPG(analyzeData.tech_translation)
+    const safeSkillMatch = toJSONArrayForPG(normalizedSkillMatch)
+
+    console.log('[analyze-candidate] 写入前 JSON 字段检查 (最终):')
+    console.log('  summary 类型:', typeof safeSummary, '内容:', JSON.stringify(safeSummary).substring(0, 200))
+    console.log('  risk_warnings 类型:', typeof safeRiskWarnings, '内容:', JSON.stringify(safeRiskWarnings).substring(0, 200))
+    console.log('  tech_translation 类型:', typeof safeTechTranslation, '内容:', JSON.stringify(safeTechTranslation).substring(0, 200))
+    console.log('  skill_match 类型:', typeof safeSkillMatch, '内容:', JSON.stringify(safeSkillMatch).substring(0, 200))
+
+    const jsonSummary = serializeForJSON(safeSummary)
+    const jsonRiskWarnings = serializeForJSON(safeRiskWarnings)
+    const jsonTechTranslation = serializeForJSON(safeTechTranslation)
+    const jsonSkillMatch = serializeForJSON(safeSkillMatch)
+
+    console.log('[analyze-candidate] 最终 JSON 字符串验证:')
+    console.log('  $4 summary json str 长度:', jsonSummary.length, '预览:', jsonSummary.substring(0, 150))
+    console.log('  $5 risk_warnings json str 长度:', jsonRiskWarnings.length, '预览:', jsonRiskWarnings.substring(0, 150))
+    console.log('  $6 tech_translation json str 长度:', jsonTechTranslation.length, '预览:', jsonTechTranslation.substring(0, 150))
+    console.log('  $7 skill_match json str 长度:', jsonSkillMatch.length, '预览:', jsonSkillMatch.substring(0, 150))
 
     const insertPayload = {
       candidate_id,
       job_id,
-      summary: analyzeData.summary || {},
-      risk_warnings: normalizedRiskWarnings,
-      tech_translation: analyzeData.tech_translation || [],
-      skill_match: normalizedSkillMatch,
+      summary: jsonSummary,
+      risk_warnings: jsonRiskWarnings,
+      tech_translation: jsonTechTranslation,
+      skill_match: jsonSkillMatch,
       updated_at: new Date().toISOString(),
     }
 
     console.log('[analyze-candidate] 写入 payload keys:', Object.keys(insertPayload))
-    console.log('[analyze-candidate] skill_match 最终值:', JSON.stringify(insertPayload.skill_match))
+    console.log('[analyze-candidate] 执行 SQL 写入...')
 
     let newAnalysis: any = null
 
-    try {
-      const { data: upsertRows, error: upsertError } = await supabase
-        .from('analysis_results')
-        .upsert(insertPayload, { onConflict: 'candidate_id' })
-        .select()
-        .limit(1)
+    if (force) {
+      const existingForUpsert = await queryOne<any>(
+        `SELECT id FROM analysis_results WHERE candidate_id = $1 LIMIT 1`,
+        [candidate_id]
+      )
 
-      if (!upsertError && upsertRows && upsertRows.length > 0) {
-        newAnalysis = upsertRows[0]
-      } else if (upsertError) {
-        console.warn('[analyze-candidate] UPSERT 失败，回退到 DELETE+INSERT:', upsertError)
-        throw upsertError
+      if (existingForUpsert) {
+        console.log('[analyze-candidate] force=true，更新已存在的分析数据 id:', existingForUpsert.id)
+        newAnalysis = await queryOne<any>(
+          `UPDATE analysis_results SET
+            job_id = $1,
+            summary = $2::json,
+            risk_warnings = $3::json,
+            tech_translation = $4::json,
+            skill_match = $5::json,
+            updated_at = NOW()
+          WHERE id = $6
+          RETURNING *`,
+          [
+            job_id,
+            insertPayload.summary,
+            insertPayload.risk_warnings,
+            insertPayload.tech_translation,
+            insertPayload.skill_match,
+            existingForUpsert.id
+          ]
+        )
+      } else {
+        console.log('[analyze-candidate] force=true，无现有数据，直接插入')
+        newAnalysis = await queryOne<any>(
+          `INSERT INTO analysis_results (
+            id, candidate_id, job_id, summary, risk_warnings, tech_translation, skill_match, updated_at, created_at
+          ) VALUES ($1, $2, $3, $4::json, $5::json, $6::json, $7::json, NOW(), NOW())
+          RETURNING *`,
+          [
+            uuidv4(),
+            candidate_id,
+            job_id,
+            insertPayload.summary,
+            insertPayload.risk_warnings,
+            insertPayload.tech_translation,
+            insertPayload.skill_match
+          ]
+        )
       }
-    } catch (e) {
-      console.warn('[analyze-candidate] UPSERT 失败，尝试 DELETE+INSERT:', e)
-      await supabase
-        .from('analysis_results')
-        .delete()
-        .eq('candidate_id', candidate_id)
+    } else {
+      newAnalysis = await queryOne<any>(
+        `INSERT INTO analysis_results (
+          id, candidate_id, job_id, summary, risk_warnings, tech_translation, skill_match, updated_at, created_at
+        ) VALUES ($1, $2, $3, $4::json, $5::json, $6::json, $7::json, NOW(), NOW())
+        RETURNING *`,
+        [
+          uuidv4(),
+          candidate_id,
+          job_id,
+          insertPayload.summary,
+          insertPayload.risk_warnings,
+          insertPayload.tech_translation,
+          insertPayload.skill_match
+        ]
+      )
+    }
 
-      const { data: insertRows, error: insertError } = await supabase
-        .from('analysis_results')
-        .insert(insertPayload)
-        .select()
-        .limit(1)
-
-      if (insertError) {
-        console.error('[analyze-candidate] INSERT 也失败:', insertError)
-        throw insertError
-      }
-      if (!insertRows || insertRows.length === 0) {
-        throw new Error('插入分析数据失败')
-      }
-      newAnalysis = insertRows[0]
+    if (!newAnalysis) {
+      throw new Error('插入分析数据失败')
     }
 
     console.log('[analyze-candidate] 深度解析完成')
-    if (newAnalysis) {
-      console.log('[analyze-candidate] 写入后返回的 keys:', Object.keys(newAnalysis))
-      console.log('[analyze-candidate] 写入后 skill_match:', JSON.stringify(newAnalysis.skill_match))
-    }
+    console.log('[analyze-candidate] 写入后返回的 keys:', Object.keys(newAnalysis))
+    console.log('[analyze-candidate] 写入后 skill_match:', JSON.stringify(newAnalysis.skill_match).substring(0, 200))
 
     const responseData = newAnalysis || insertPayload
     return NextResponse.json({

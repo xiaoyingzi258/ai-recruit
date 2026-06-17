@@ -1,6 +1,7 @@
 import type { Metadata } from "next"
 import "./globals.css"
 import AppLayout from "@/components/AppLayout"
+import Providers from "@/components/providers"
 import { AuthProvider } from "@/contexts/auth-context"
 import { JobProvider } from "@/contexts/job-context"
 
@@ -17,11 +18,13 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <body>
-        <AuthProvider>
-          <JobProvider>
-            <AppLayout>{children}</AppLayout>
-          </JobProvider>
-        </AuthProvider>
+        <Providers>
+          <AuthProvider>
+            <JobProvider>
+              <AppLayout>{children}</AppLayout>
+            </JobProvider>
+          </AuthProvider>
+        </Providers>
       </body>
     </html>
   )
