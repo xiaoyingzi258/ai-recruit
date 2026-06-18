@@ -109,9 +109,11 @@ export async function POST(request: NextRequest) {
         if (userCheck) validUserIds.push(uid)
       }
       console.log('[assign-members] 验证通过的用户数:', validUserIds.length, '请求的用户数:', user_ids.length)
+      console.log('[assign-members] validUserIds:', validUserIds)
+      console.log('[assign-members] role_id:', role_id)
 
       const values = validUserIds
-        .map((_, i) => `($1, $${i + 2}, NOW())`)
+        .map((_, i) => `($${i + 2}, $1, NOW())`)
         .join(', ')
       if (validUserIds.length > 0) {
         await query(
