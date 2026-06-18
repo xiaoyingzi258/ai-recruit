@@ -125,13 +125,32 @@ export async function POST(request: NextRequest) {
       )
 
       if (existingQuestions) {
-        const fraudCount = Array.isArray(existingQuestions.fraud_questions) ? existingQuestions.fraud_questions.length : 0
-        const techCount = Array.isArray(existingQuestions.tech_questions) ? existingQuestions.tech_questions.length : 0
-        const softCount = Array.isArray(existingQuestions.soft_questions) ? existingQuestions.soft_questions.length : 0
+        const parseJsonField = (val: any): any[] => {
+          if (Array.isArray(val)) return val
+          if (typeof val === 'string') {
+            try { return JSON.parse(val) } catch (e) { return [] }
+          }
+          return []
+        }
+
+        const fraudArr = parseJsonField(existingQuestions.fraud_questions)
+        const techArr = parseJsonField(existingQuestions.tech_questions)
+        const softArr = parseJsonField(existingQuestions.soft_questions)
+
+        const fraudCount = fraudArr.length
+        const techCount = techArr.length
+        const softCount = softArr.length
 
         if (fraudCount > 0 || techCount > 0 || softCount > 0) {
           console.log(`  ✅ 命中有效缓存: fraud=${fraudCount}, tech=${techCount}, soft=${softCount}`)
-          return NextResponse.json({ success: true, data: existingQuestions, from_cache: true })
+          // 返回前确保 JSON 字段是数组格式
+          const cachedData = {
+            ...existingQuestions,
+            fraud_questions: fraudArr,
+            tech_questions: techArr,
+            soft_questions: softArr
+          }
+          return NextResponse.json({ success: true, data: cachedData, from_cache: true })
         } else {
           console.log('  ⚠️  缓存存在但内容为空，需要重新生成')
         }
@@ -498,6 +517,9 @@ export async function POST(request: NextRequest) {
 
     // ---- 写入数据库 (事务：DELETE 旧记录 + INSERT 新记录) ----
     console.log('[阶段 7] 写入数据库 (DELETE + INSERT)...')
+    console.log('  fraud 数量:', normalizedFraud.length, '类型:', typeof normalizedFraud)
+    console.log('  tech 数量:', normalizedTech.length, '类型:', typeof normalizedTech)
+    console.log('  soft 数量:', normalizedSoft.length, '类型:', typeof normalizedSoft)
 
     let savedRecord: any = null
 
@@ -512,23 +534,32 @@ export async function POST(request: NextRequest) {
       )
       console.log('  ✅ 已删除 candidate_id=' + candidate_id + ' 的旧记录')
 
-      // 插入新记录
+      // 插入新记录 - 确保 JSON 字段正确处理
+      const fraudJson = JSON.stringify(normalizedFraud)
+      const techJson = JSON.stringify(normalizedTech)
+      const softJson = JSON.stringify(normalizedSoft)
+
+      console.log('  fraud JSON 长度:', fraudJson.length)
+      console.log('  tech JSON 长度:', techJson.length)
+      console.log('  soft JSON 长度:', softJson.length)
+
       const { rows } = await client.query(
         `INSERT INTO interview_questions (
           id, candidate_id, job_id, fraud_questions, tech_questions, soft_questions, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING *`,
+        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, NOW()) RETURNING *`,
         [
           uuidv4(),
           candidate_id,
           job_id,
-          normalizedFraud,
-          normalizedTech,
-          normalizedSoft
+          fraudJson,
+          techJson,
+          softJson
         ]
       )
 
       savedRecord = rows[0]
       console.log('  ✅ INSERT 成功, record id:', savedRecord.id)
+      console.log('  返回记录的 fraud_questions 类型:', typeof savedRecord.fraud_questions)
 
       await client.query('COMMIT')
     } catch (dbErr: any) {
