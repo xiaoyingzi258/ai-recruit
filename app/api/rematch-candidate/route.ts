@@ -153,12 +153,14 @@ export async function POST(request: NextRequest) {
     const safeProjectExp = toJSONObjectForPG(cleanMatchData.project_exp)
     const safeRiskPenalty = toJSONObjectForPG(cleanMatchData.risk_penalty)
     const safeRiskBlock = cleanMatchData.risk_block ? toJSONObjectForPG(cleanMatchData.risk_block) : null
+    const safeMatchAdvantages = Array.isArray(cleanMatchData.match_advantages) ? cleanMatchData.match_advantages : []
 
     const jsonHardCondition = serializeForJSON(safeHardCondition)
     const jsonTechSkill = serializeForJSON(safeTechSkill)
     const jsonProjectExp = serializeForJSON(safeProjectExp)
     const jsonRiskPenalty = serializeForJSON(safeRiskPenalty)
     const jsonRiskBlock = safeRiskBlock ? serializeForJSON(safeRiskBlock) : serializeForJSON(null)
+    const jsonMatchAdvantages = serializeForJSON(safeMatchAdvantages)
 
     console.log('[rematch-candidate] 更新 match_results 的 JSON 字段:')
     console.log('  total_score:', cleanMatchData.total_score || 0)
@@ -167,6 +169,7 @@ export async function POST(request: NextRequest) {
     console.log('  project_exp(json str):', jsonProjectExp.substring(0, 150))
     console.log('  risk_penalty(json str):', jsonRiskPenalty.substring(0, 150))
     console.log('  risk_block(json str):', jsonRiskBlock.substring(0, 150))
+    console.log('  match_advantages(json str):', jsonMatchAdvantages.substring(0, 150))
     console.log('  risk_tag:', cleanMatchData.risk_tag || '')
 
     const matchUpdateResult = await queryOne<any>(
@@ -176,8 +179,9 @@ export async function POST(request: NextRequest) {
         tech_skill = $3::json,
         project_exp = $4::json,
         risk_penalty = $5::json,
-        risk_block = $6::json
-      WHERE candidate_id = $7
+        risk_block = $6::json,
+        match_advantages = $7::json
+      WHERE candidate_id = $8
       RETURNING *`,
       [
         cleanMatchData.total_score || 0,
@@ -186,6 +190,7 @@ export async function POST(request: NextRequest) {
         jsonProjectExp,
         jsonRiskPenalty,
         jsonRiskBlock,
+        jsonMatchAdvantages,
         candidate_id
       ]
     )

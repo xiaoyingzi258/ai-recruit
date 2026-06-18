@@ -515,8 +515,8 @@ export async function POST(request: NextRequest) {
       // 插入新记录
       const { rows } = await client.query(
         `INSERT INTO interview_questions (
-          id, candidate_id, job_id, fraud_questions, tech_questions, soft_questions, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW()) RETURNING *`,
+          id, candidate_id, job_id, fraud_questions, tech_questions, soft_questions, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING *`,
         [
           uuidv4(),
           candidate_id,

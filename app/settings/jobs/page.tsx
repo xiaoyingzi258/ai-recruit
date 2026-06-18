@@ -18,7 +18,7 @@ interface Job {
 const tabs = [
   { key: "jobs", label: "岗位管理", disabled: false },
   { key: "roles", label: "角色权限", disabled: false },
-  { key: "company", label: "企业信息", disabled: true },
+  { key: "company", label: "企业信息", disabled: false },
 ]
 
 export default function JobsPage() {
@@ -50,7 +50,7 @@ export default function JobsPage() {
   const [deleting, setDeleting] = useState(false)
 
   const getUpdatedBy = (job: any) => {
-    return job.creator?.name || profile?.name || "admin"
+    return job.creator_name || "未知"
   }
 
   const formatDate = (dateString: string) => {
@@ -210,6 +210,7 @@ export default function JobsPage() {
                   if (!tab.disabled) {
                     if (tab.key === "roles") router.push("/settings/roles")
                     if (tab.key === "jobs") router.push("/settings/jobs")
+                    if (tab.key === "company") router.push("/settings/company")
                   }
                 }}
                 className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${

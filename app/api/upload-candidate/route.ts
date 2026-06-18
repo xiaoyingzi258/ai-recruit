@@ -437,12 +437,14 @@ export async function POST(request: NextRequest) {
         const safeProjectExp = toJSONObjectForPG(cleanMatchData.project_exp)
         const safeRiskPenalty = toJSONObjectForPG(cleanMatchData.risk_penalty)
         const safeRiskBlock = cleanMatchData.risk_block ? toJSONObjectForPG(cleanMatchData.risk_block) : null
+        const safeMatchAdvantages = Array.isArray(cleanMatchData.match_advantages) ? cleanMatchData.match_advantages : []
 
         const jsonHardCondition = serializeForJSON(safeHardCondition)
         const jsonTechSkill = serializeForJSON(safeTechSkill)
         const jsonProjectExp = serializeForJSON(safeProjectExp)
         const jsonRiskPenalty = serializeForJSON(safeRiskPenalty)
         const jsonRiskBlock = safeRiskBlock ? serializeForJSON(safeRiskBlock) : serializeForJSON(null)
+        const jsonMatchAdvantages = serializeForJSON(safeMatchAdvantages)
 
         console.log('[步骤5] 即将 INSERT INTO match_results, 参数:')
         console.log('  total_score:', (cleanMatchData.total_score ?? 0), '(类型:', typeof (cleanMatchData.total_score ?? 0), ')')
@@ -451,12 +453,13 @@ export async function POST(request: NextRequest) {
         console.log('  project_exp(json str):', jsonProjectExp.substring(0, 150))
         console.log('  risk_penalty(json str):', jsonRiskPenalty.substring(0, 150))
         console.log('  risk_block(json str):', jsonRiskBlock.substring(0, 150))
+        console.log('  match_advantages(json str):', jsonMatchAdvantages.substring(0, 150))
 
         await query(
           `INSERT INTO match_results (
             id, candidate_id, job_id, total_score, hard_condition, tech_skill, project_exp,
-            risk_penalty, risk_block, created_at
-          ) VALUES ($1, $2, $3, $4, $5::json, $6::json, $7::json, $8::json, $9::json, NOW())`,
+            risk_penalty, risk_block, match_advantages, created_at
+          ) VALUES ($1, $2, $3, $4, $5::json, $6::json, $7::json, $8::json, $9::json, $10::json, NOW())`,
           [
             uuidv4(),
             candidate.id,
@@ -466,7 +469,8 @@ export async function POST(request: NextRequest) {
             jsonTechSkill,
             jsonProjectExp,
             jsonRiskPenalty,
-            jsonRiskBlock
+            jsonRiskBlock,
+            jsonMatchAdvantages,
           ]
         )
         console.log('[步骤5] INSERT INTO match_results 成功')

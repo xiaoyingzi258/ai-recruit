@@ -1,12 +1,28 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import Link from "next/link"
 import { LayoutDashboard, Users, Settings, Sparkles, LogOut, FileSearch, MessageSquare, User, PanelLeft } from "lucide-react"
 import { useAuth } from "@/contexts/auth-context"
 import { useJob } from "@/contexts/job-context"
 import { TooltipProvider } from "@/components/ui/tooltip"
+
+// 页面 → 权限 key 的映射
+// 用户必须拥有对应 key 才能在导航中看到该页面
+const NAV_PERMISSION_MAP: Record<string, string[]> = {
+  "/candidates": ["candidate:view"],
+  "/deep-analysis": ["analysis:access"],
+  "/interview-questions": ["interview:access"],
+  "/settings": ["system:manage", "job:view", "candidate:view"],
+}
+
+function hasPermissionForNav(href: string, permissions: string[]): boolean {
+  const required = NAV_PERMISSION_MAP[href]
+  if (!required) return true
+  // 任一权限满足即可（系统设置里包含岗位管理、角色权限等）
+  return required.some((key) => permissions.includes(key))
+}
 
 const navItems = [
   {
@@ -51,8 +67,33 @@ export default function AppLayout({
   const { profile, loading: authLoading, signOut } = authState
   const { selectedJob, loading: jobsLoading } = useJob()
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [userPermissions, setUserPermissions] = useState<string[]>([])
+  const [permissionsLoading, setPermissionsLoading] = useState(true)
 
   console.log("[AppLayout] useAuth 返回:", authState)
+
+  // 登录后获取当前用户的权限列表
+  useEffect(() => {
+    async function loadPermissions() {
+      if (!authState.user) return
+      try {
+        setPermissionsLoading(true)
+        const res = await fetch('/api/users/permissions')
+        const data = await res.json()
+        if (data.success) {
+          setUserPermissions(data.data.permissions || [])
+          console.log('[AppLayout] 用户权限:', data.data.permissions)
+        }
+      } catch (error) {
+        console.error('[AppLayout] 获取权限失败:', error)
+      } finally {
+        setPermissionsLoading(false)
+      }
+    }
+    if (authState.user && !authLoading) {
+      loadPermissions()
+    }
+  }, [authState.user, authLoading])
 
   const isLoginPage = pathname === "/login"
 
@@ -65,6 +106,20 @@ export default function AppLayout({
     router.push("/login")
     return null
   }
+
+  // 根据权限过滤导航项
+  const visibleNavItems = navItems.filter((item) => {
+    // 加载中时，默认显示全部（避免闪烁）
+    if (permissionsLoading || userPermissions.length === 0) {
+      // 如果还没加载权限，根据旧的 role 字段做个保守判断：admin/manager 显示全部
+      const role = profile?.role
+      if (role === 'admin' || role === 'manager') return true
+      // hr 默认不显示"系统设置"中的角色权限，但仍显示匹配候选人、深度解析等
+      if (item.href === '/settings') return role === 'admin'
+      return true
+    }
+    return hasPermissionForNav(item.href, userPermissions)
+  })
 
   const handleSignOut = async () => {
     await signOut()
@@ -94,7 +149,7 @@ export default function AppLayout({
         </div>
         
         <nav className="flex-1 p-5 space-y-2 overflow-y-auto">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const Icon = item.icon
             const isActive = (() => {
               if (item.matchPattern) {

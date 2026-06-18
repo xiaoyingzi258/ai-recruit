@@ -13,6 +13,8 @@ export type User = {
   role: 'hr' | 'manager' | 'admin'
   email: string
   password_hash: string
+  department: string | null
+  position: string | null
   created_at: string
 }
 
@@ -86,6 +88,7 @@ export type Role = {
   name: string
   description: string | null
   is_system: boolean
+  data_scope: 'company' | 'department' | 'assigned' | null
   created_at: string
 }
 
@@ -93,6 +96,13 @@ export type RolePermission = {
   id: string
   role_id: string
   permission_key: string
+  created_at: string
+}
+
+export type UserRole = {
+  id: string
+  user_id: string
+  role_id: string
   created_at: string
 }
 
