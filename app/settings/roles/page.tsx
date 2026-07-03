@@ -470,9 +470,11 @@ export default function RolesPage() {
     if (allSelected) {
       setSelectedUserIds((prev) => prev.filter((id) => !visibleIds.includes(id)))
     } else {
-      const newSelected = new Set(prev)
-      visibleIds.forEach((id) => newSelected.add(id))
-      setSelectedUserIds(Array.from(newSelected))
+      setSelectedUserIds((prev) => {
+        const newSelected = new Set(prev)
+        visibleIds.forEach((id) => newSelected.add(id))
+        return Array.from(newSelected)
+      })
     }
   }
 

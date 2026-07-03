@@ -81,7 +81,7 @@ export default function CandidateDetailPage() {
           if (jobResult.success && jobResult.data) {
             jobData = jobResult.data
             setCandidateJob(jobData)
-            console.log('[候选人详情] 岗位加载成功:', jobData.title)
+            console.log('[候选人详情] 岗位加载成功:', jobData?.title)
           } else {
             console.log('[候选人详情] 岗位 API 返回失败:', jobResult.error)
           }
@@ -101,7 +101,7 @@ export default function CandidateDetailPage() {
           if (jobsResult.success && jobsResult.data && jobsResult.data.length > 0) {
             jobData = jobsResult.data[0]
             setCandidateJob(jobData)
-            console.log('[候选人详情] 使用首个备选岗位:', jobData.title)
+            console.log('[候选人详情] 使用首个备选岗位:', jobData?.title)
           }
         }
       }
