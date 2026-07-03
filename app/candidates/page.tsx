@@ -48,6 +48,11 @@ const formatEducation = (education: any) => {
   return '-'
 }
 
+type MatchDetail = {
+  score?: number
+  passed?: boolean
+}
+
 type CandidateWithMatch = {
   id: string
   name: string
@@ -59,6 +64,10 @@ type CandidateWithMatch = {
   status: 'shortlisted' | 'removed'
   parsed_data?: any
   match_score?: number
+  hard_condition?: MatchDetail
+  tech_skill?: MatchDetail
+  project_exp?: MatchDetail
+  risk_penalty?: MatchDetail
 }
 
 type Job = {
@@ -176,7 +185,11 @@ export default function CandidatesPage() {
         expected_max_salary: c.expected_max_salary,
         status: c.status,
         parsed_data: c.parsed_data,
-        match_score: c.match_score
+        match_score: c.match_score,
+        hard_condition: c.hard_condition,
+        tech_skill: c.tech_skill,
+        project_exp: c.project_exp,
+        risk_penalty: c.risk_penalty
       }))
 
       setCandidates(mapped)
@@ -789,7 +802,7 @@ export default function CandidatesPage() {
             </button>
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="overflow-visible">
             <table className="w-full">
               <thead className="bg-gray-50">
                 <tr>
@@ -843,9 +856,103 @@ export default function CandidatesPage() {
                       </td>
                       <td className="px-6 py-4">
                         {candidate.match_score !== undefined ? (
-                          <span className={`px-3 py-1 rounded-full text-sm font-medium ${getMatchScoreColor(candidate.match_score)}`}>
-                            {candidate.match_score}分
-                          </span>
+                          <div className={`group relative inline-flex items-center cursor-help pb-1 border-b border-dashed ${
+                            candidate.match_score >= 80 ? 'text-emerald-500 border-emerald-200' :
+                            candidate.match_score >= 60 ? 'text-amber-500 border-amber-200' :
+                            candidate.match_score > 0 ? 'text-red-500 border-red-200' :
+                            'text-gray-400 border-gray-300'
+                          }`}>
+                            <span className="font-medium">{candidate.match_score}分</span>
+                            
+                            <div className="absolute z-[999] left-1/2 -translate-x-1/2 bottom-full mb-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 pointer-events-none">
+                              <div className="bg-white rounded-lg shadow-xl border border-gray-200 p-4 w-64">
+                                <div className="text-xs text-gray-500 mb-3 font-medium">评分引擎结构 (满分100)</div>
+                                
+                                {(() => {
+                                  const getSafeScore = (field: any, path: string[]) => {
+                                    try {
+                                      let obj = typeof field === 'string' ? JSON.parse(field) : field;
+                                      return path.reduce((acc: any, key: string) => (acc && acc[key] !== undefined ? acc[key] : 0), obj) || 0;
+                                    } catch (e) {
+                                      return 0;
+                                    }
+                                  };
+                                  
+                                  const l1Score = getSafeScore(candidate.hard_condition, ['total_score']);
+                                  const l2Score = getSafeScore(candidate.tech_skill, ['vector_similarity', 'score']) || getSafeScore(candidate.tech_skill, ['score']);
+                                  const l3Score = getSafeScore(candidate.project_exp, ['score']);
+                                  const riskScore = getSafeScore(candidate.risk_penalty, ['score']);
+                                  const l1Passed = typeof candidate.hard_condition === 'string' 
+                                    ? (JSON.parse(candidate.hard_condition)?.passed ?? true)
+                                    : (candidate.hard_condition?.passed ?? true);
+                                  const isBlocked = candidate.match_score === 0 && !l1Passed;
+                                  
+                                  return (
+                                    <>
+                                      <div className="flex items-center justify-between mb-2">
+                                        <div className="flex items-center gap-2">
+                                          <span className="w-2 h-2 rounded-full bg-blue-500" />
+                                          <span className="text-xs text-gray-600">硬性条件</span>
+                                        </div>
+                                        <span className={`font-mono font-semibold ${isBlocked ? 'text-red-500' : 'text-gray-700'}`}>
+                                          {l1Passed ? l1Score.toFixed(1) : <span className="line-through decoration-red-500">{l1Score.toFixed(1)}</span>}
+                                        </span>
+                                      </div>
+                                      
+                                      <div className="flex items-center justify-between mb-2">
+                                        <div className="flex items-center gap-2">
+                                          <span className={`w-2 h-2 rounded-full ${isBlocked ? 'bg-gray-300' : 'bg-purple-500'}`} />
+                                          <span className="text-xs text-gray-600">技能向量</span>
+                                        </div>
+                                        {isBlocked ? (
+                                          <span className="text-xs text-gray-400 font-normal">未执行</span>
+                                        ) : (
+                                          <span className={`font-mono font-semibold ${l2Score < 10 ? 'text-red-500' : 'text-gray-700'}`}>
+                                            {l2Score.toFixed(1)}
+                                          </span>
+                                        )}
+                                      </div>
+                                      
+                                      <div className="flex items-center justify-between mb-3 pt-2 border-t border-gray-100">
+                                        <div className="flex items-center gap-2">
+                                          <span className={`w-2 h-2 rounded-full ${isBlocked ? 'bg-gray-300' : 'bg-green-500'}`} />
+                                          <span className="text-xs text-gray-600">项目经验</span>
+                                        </div>
+                                        {isBlocked ? (
+                                          <span className="text-xs text-gray-400 font-normal">未执行</span>
+                                        ) : (
+                                          <span className={`font-mono font-semibold ${l3Score < 10 ? 'text-red-500' : 'text-gray-700'}`}>
+                                            {l3Score.toFixed(1)}
+                                          </span>
+                                        )}
+                                      </div>
+                                      
+                                      {isBlocked ? (
+                                        <div className="mt-2 p-2 bg-red-50 border border-red-100 rounded-md text-xs text-red-700 leading-relaxed">
+                                          <strong>⚠️ 系统拦截生效</strong><br/>
+                                          候选人硬性条件不达标，为节约 AI 算力，已自动终止深度推理。
+                                        </div>
+                                      ) : (
+                                        <div className="flex items-center justify-between">
+                                          <div className="flex items-center gap-2">
+                                            <span className="w-2 h-2 rounded-full bg-red-500" />
+                                            <span className="text-xs text-gray-600">风险扣分</span>
+                                          </div>
+                                          {riskScore > 0 ? (
+                                            <span className="font-mono font-semibold bg-red-50 text-red-500 px-1.5 py-0.5 rounded">
+                                              -{riskScore.toFixed(1)}
+                                            </span>
+                                          ) : (
+                                            <span className="font-mono font-semibold text-gray-400">-{riskScore.toFixed(1)}</span>
+                                          )}
+                                        </div>
+                                      )}
+                                    </>
+                                  )
+                                })()}
+                              </div>
+                            </div>
+                          </div>
                         ) : '-'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">

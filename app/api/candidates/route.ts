@@ -18,7 +18,12 @@ export async function GET(request: NextRequest) {
   }
 
   const rows = await query(
-    `SELECT c.*, m.total_score as match_score
+    `SELECT c.*, 
+            m.total_score as match_score,
+            m.hard_condition,
+            m.tech_skill,
+            m.project_exp,
+            m.risk_penalty
      FROM candidates c
      LEFT JOIN match_results m ON c.id = m.candidate_id AND m.job_id = $2
      WHERE c.company_id = $1 AND c.job_id = $2
@@ -26,5 +31,21 @@ export async function GET(request: NextRequest) {
     [companyId, jobId]
   )
 
-  return NextResponse.json({ success: true, data: rows })
+  const parsedRows = rows.map((row: any) => {
+    const parsed: any = { ...row }
+    const jsonFields = ['hard_condition', 'tech_skill', 'project_exp', 'risk_penalty']
+    jsonFields.forEach((field) => {
+      if (row[field]) {
+        try {
+          parsed[field] = typeof row[field] === 'string' ? JSON.parse(row[field]) : row[field]
+        } catch (e) {
+          console.error(`解析 ${field} 失败:`, e)
+          parsed[field] = null
+        }
+      }
+    })
+    return parsed
+  })
+
+  return NextResponse.json({ success: true, data: parsedRows })
 }

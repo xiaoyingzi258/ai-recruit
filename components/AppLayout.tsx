@@ -204,7 +204,7 @@ export default function AppLayout({
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col transition-all duration-300 ease-in-out" style={{ marginLeft: mainMargin }}>
+      <main className="flex-1 flex flex-col transition-all duration-300 ease-in-out bg-gray-50" style={{ marginLeft: mainMargin }}>
         <header className="bg-white border-b border-gray-200 flex items-center justify-between fixed top-0 z-20 transition-all duration-300 ease-in-out" style={{ height: '70px', padding: '0 20px', width: `calc(100% - ${mainMargin})`, right: '0' }}>
           <div className="flex items-center gap-4">
             <button
@@ -226,7 +226,7 @@ export default function AppLayout({
             </div>
           </div>
         </header>
-        <div className="flex-1 overflow-y-auto" style={{ padding: '20px', marginTop: '70px' }}>
+        <div className="min-h-screen" style={{ padding: '20px', marginTop: '70px' }}>
           <TooltipProvider>{children}</TooltipProvider>
         </div>
       </main>
