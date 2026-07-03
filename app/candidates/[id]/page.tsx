@@ -8,7 +8,7 @@ import { useAuth } from '@/contexts/auth-context'
 type Candidate = {
   id: string
   name: string
-  work_years?: string | number
+  experience_years?: number
   current_company?: string
   parsed_data?: any
   job_id: string | null
@@ -280,10 +280,10 @@ export default function CandidateDetailPage() {
                       <span>{education.degree || ''} · {education.major || ''}</span>
                     </div>
                   )}
-                  {candidate.work_years != null && (
+                  {candidate.experience_years != null && (
                     <div className="flex items-center gap-2">
                       <span className="text-gray-400">⏱</span>
-                      <span>{typeof candidate.work_years === 'number' ? (candidate.work_years === 0 ? '应届生' : `${candidate.work_years}年经验`) : candidate.work_years}</span>
+                      <span>{candidate.experience_years === 0 ? '应届生' : `${candidate.experience_years}年经验`}</span>
                     </div>
                   )}
                 </div>
@@ -436,30 +436,27 @@ export default function CandidateDetailPage() {
             <h2 className="text-xl font-semibold text-[#1C1E3A]">技能匹配度雷达</h2>
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {analysis?.skill_match && Array.isArray(analysis.skill_match) && analysis.skill_match.length > 0 ? (
               analysis.skill_match.map((item: any, idx: number) => {
                 const score = item.match_level || 0
-                const scoreColor = score >= 80 ? '#4AB5A9' : score >= 60 ? '#F59E0B' : '#EF4444'
-                const commentColor = score >= 60 ? 'text-yellow-600' : 'text-red-600'
+                const scoreColor = score >= 80 ? 'text-emerald-500' : score >= 40 ? 'text-amber-500' : 'text-red-500'
+                const analysisBg = score >= 80 ? 'bg-emerald-50/50' : score >= 40 ? 'bg-amber-50/50' : 'bg-red-50/50'
+                const analysisText = score >= 80 ? 'text-emerald-800' : score >= 40 ? 'text-amber-800' : 'text-red-800'
                 return (
-                  <div key={idx}>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-semibold text-[#1C1E3A]">{item.skill_name}</span>
-                      <span className="text-xl font-bold" style={{ color: scoreColor }}>{score}%</span>
+                  <div key={idx} className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm hover:shadow-md hover:border-gray-300 transition-all">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-gray-800 font-semibold text-[15px]">{item.skill_name}</span>
+                      <span className={`text-xl font-bold ${scoreColor}`}>{score}%</span>
                     </div>
-                    <div className="w-full bg-gray-100 rounded-full h-2 mb-3">
-                      <div
-                        className="h-2 rounded-full"
-                        style={{
-                          width: `${score}%`,
-                          backgroundColor: scoreColor
-                        }}
-                      />
+                    <div className="text-xs mb-3">
+                      <span className="text-gray-400">岗位要求：</span>
+                      <span className="text-gray-600">{item.job_requirement}</span>
                     </div>
-                    <p className="text-sm text-[#4AB5A9]">岗位要求：{item.job_requirement}</p>
                     {item.match_comment && (
-                      <p className={`text-sm mt-1 ${commentColor}`}>{item.match_comment}</p>
+                      <div className={`${analysisBg} rounded-lg p-3`}>
+                        <p className={`text-sm leading-relaxed ${analysisText}`}>简历解析：{item.match_comment}</p>
+                      </div>
                     )}
                   </div>
                 )

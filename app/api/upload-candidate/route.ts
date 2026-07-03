@@ -8,6 +8,7 @@ import mammoth from 'mammoth'
 import { writeFileSync, unlinkSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { calculateHybridScore } from '@/lib/hybrid-scoring'
 
 function safeDecodeURIComponent(str: string): string {
   if (!str) return ''
@@ -206,10 +207,17 @@ export async function POST(request: NextRequest) {
         sendProgress(2, 'done')
         sendProgress(3, 'start')
 
+        const currentYear = new Date().getFullYear();
+        const currentMonth = new Date().getMonth() + 1;
+        const injectedResumeText = `【系统提示：当前真实时间是 ${currentYear}年${currentMonth}月，请以此计算"至今"的工作年限】\n\n=== 以下为候选人简历正文 ===\n\n${resumeText}`;
+        console.log("[步骤3] 已注入当前时间上下文, 长度:", injectedResumeText.length)
+
+        const cozeParams = { injectedResumeText: injectedResumeText }
+        console.log("[步骤3-Debug] 准备发送给 Coze 的参数对象:", cozeParams)
         console.log('[步骤3] 调用 Coze 简历解析工作流...')
         const parseStream = await coze.workflows.runs.stream({
           workflow_id: '7641517139460079657',
-          parameters: { resume_text: resumeText }
+          parameters: cozeParams
         })
 
         let parseResult = ''
@@ -250,7 +258,10 @@ export async function POST(request: NextRequest) {
           parsedData = {
             personal_info: { name: '未知' },
             work_experience: [],
-            expected_salary: ''
+            experience_years: null,
+            age: null,
+            expected_min_salary: null,
+            expected_max_salary: null
           }
         }
 
@@ -269,144 +280,119 @@ export async function POST(request: NextRequest) {
         console.log('  personal_info:', JSON.stringify(parsedData.personal_info))
         console.log('  work_experience 数量:', parsedData.work_experience?.length || 0)
         console.log('  work_experience 第一项:', JSON.stringify(parsedData.work_experience?.[0] || null))
-        console.log('  work_years:', parsedData.work_years)
-        console.log('  expected_salary:', parsedData.expected_salary)
+        console.log('  experience_years:', parsedData.experience_years)
+        console.log('  age:', parsedData.age)
+        console.log('  expected_min_salary:', parsedData.expected_min_salary)
+        console.log('  expected_max_salary:', parsedData.expected_max_salary)
         console.log('  skills:', JSON.stringify(parsedData.skills))
 
         sendProgress(3, 'done')
         sendProgress(4, 'start')
 
-        console.log('[步骤4] 调用 Coze 人岗匹配工作流...')
-        console.log('  发送的 resume_data:', JSON.stringify(parsedData).substring(0, 300))
-        console.log('  发送的 jd_text 长度:', jdText.length)
-
-        const matchStream = await coze.workflows.runs.stream({
-          workflow_id: '7642566426397655059',
-          parameters: { resume_data: JSON.stringify(parsedData), jd_text: jdText }
-        })
-
-        let matchResult = ''
-        let matchChunkCount = 0
-        for await (const chunk of matchStream) {
-          const data = chunk.data as any
-          if (data?.content) {
-            matchResult += data.content
-            matchChunkCount++
-          }
-        }
-        console.log('[步骤4] Coze 原始响应 matchResult 长度:', matchResult.length, 'chunks:', matchChunkCount)
-        console.log('[步骤4] Coze 原始响应 matchResult 内容:', matchResult.substring(0, 500))
-
-        let matchData: any = null
-        try {
-          matchData = JSON.parse(matchResult)
-          console.log('[步骤4] 初步解析成功, top-level keys:', Object.keys(matchData))
-          if (matchData.output) {
-            matchData = matchData.output
-            console.log('[步骤4] 提取 output, keys:', Object.keys(matchData))
-          } else if (matchData.data) {
-            matchData = matchData.data
-            console.log('[步骤4] 提取 data, keys:', Object.keys(matchData))
-          } else if (matchData.result) {
-            matchData = matchData.result
-            console.log('[步骤4] 提取 result, keys:', Object.keys(matchData))
-          }
-        } catch (e) {
-          console.warn('[步骤4] JSON.parse 失败, 使用原始结果:', e)
-          matchData = { raw_result: matchResult }
-        }
-
-        console.log('[步骤4] 最终 matchData 完整内容:', JSON.stringify(matchData, null, 2))
-
-        if (!matchData) {
-          console.log('[步骤4] matchData 为空, 使用默认值')
-          matchData = {
-            total_score: 0,
-            hard_condition: {},
-            tech_skill: {},
-            project_exp: {},
-            risk_penalty: {},
-            risk_block: null,
-            risk_tag: ''
-          }
-        }
-
-        console.log('[步骤4] matchData 核心字段检查:')
-        console.log('  total_score:', matchData.total_score, '(类型:', typeof matchData.total_score, ')')
-        console.log('  hard_condition 类型:', typeof matchData.hard_condition, '内容:', JSON.stringify(matchData.hard_condition).substring(0, 100))
-        console.log('  tech_skill 类型:', typeof matchData.tech_skill, '内容:', JSON.stringify(matchData.tech_skill).substring(0, 100))
-        console.log('  project_exp 类型:', typeof matchData.project_exp, '内容:', JSON.stringify(matchData.project_exp).substring(0, 100))
-        console.log('  risk_penalty 类型:', typeof matchData.risk_penalty, '内容:', JSON.stringify(matchData.risk_penalty).substring(0, 100))
-        console.log('  risk_block 类型:', typeof matchData.risk_block, '内容:', JSON.stringify(matchData.risk_block).substring(0, 100))
-        console.log('  risk_tag:', matchData.risk_tag)
-
-        sendProgress(4, 'done')
-        sendProgress(5, 'start')
+        console.log('[步骤4] 保存候选人数据 + 调用三层混合打分引擎...')
 
         if (Array.isArray(parsedData.skills) && parsedData.skills.length > 0 && typeof parsedData.skills[0] === 'string') {
-          console.log('[步骤5] skills 是字符串数组, 转换为对象数组')
+          console.log('[步骤4] skills 是字符串数组, 转换为对象数组')
           parsedData.skills = parsedData.skills.map((s: string) => ({ name: s }))
         }
 
-        const workYearsStr = parsedData.work_years || parsedData.personal_info?.work_years || ''
-        console.log('[步骤5] workYears 原始字符串:', workYearsStr)
-        let workYears: number | null = null
-        const workYearsMatch = String(workYearsStr).match(/(\d+(\.\d+)?)/)
-        if (workYearsMatch) {
-          workYears = Math.round(parseFloat(workYearsMatch[1]))
+        console.log('\n' + '='.repeat(60))
+        console.log('[步骤4-Mapping] ======== 字段映射调试开始 ========')
+        console.log('='.repeat(60))
+
+        // 1. name 字段提取
+        const nameRaw = parsedData.name || parsedData.personal_info?.name || null
+        const candidateName = nameRaw || '未知'
+        console.log('[步骤4-Mapping] 【name 字段】')
+        console.log('  原始值(parsedData.name):', nameRaw, !nameRaw ? '⚠️ 为空' : '')
+        console.log('  兜底逻辑: parsedData.name || personal_info.name || "未知"')
+        console.log('  最终值:', candidateName)
+
+        // 2. experience_years 字段提取（工作年限，整数）
+        const experienceYears = Number(parsedData.experience_years) || 0
+        console.log('[步骤4-Mapping] 【experience_years 字段（工作年限）】')
+        console.log('  原始值(parsedData.experience_years):', parsedData.experience_years)
+        console.log('  最终值:', experienceYears, '年')
+
+        // 3. education 字段提取（学历）
+        let education = ''
+        const degreeLevelRaw = parsedData.degree_level
+        console.log('[步骤4-Mapping] 【education 字段（学历）】')
+        console.log('  原始值(parsedData.degree_level):', degreeLevelRaw, !degreeLevelRaw ? '⚠️ 为空' : '')
+
+        if (degreeLevelRaw && typeof degreeLevelRaw === 'string') {
+          education = degreeLevelRaw
+          console.log('  提取逻辑: 直接使用 degree_level →', education)
+        } else if (parsedData.education && Array.isArray(parsedData.education) && parsedData.education.length > 0) {
+          education = parsedData.education[0]?.degree || ''
+          console.log('  备用逻辑: education[0].degree →', education)
         }
-        console.log('[步骤5] 解析后的 workYears:', workYears)
+
+        if (!education) {
+          console.log('  ⚠️ 最终值为空字符串')
+        } else {
+          console.log('  最终值:', education)
+        }
+
+        console.log('-'.repeat(60))
+
+        // 4. 其他字段提取
+        const age = typeof parsedData.age === 'number' && !isNaN(parsedData.age)
+          ? parsedData.age
+          : (typeof parsedData.personal_info?.age === 'number' && !isNaN(parsedData.personal_info?.age)
+            ? parsedData.personal_info.age
+            : null)
 
         let currentCompany = ''
         const workExp = parsedData.work_experience
         if (Array.isArray(workExp) && workExp.length > 0) {
           for (const exp of workExp) {
-            console.log('[步骤5] 遍历 work_experience 项:', JSON.stringify(exp))
             if (exp.company) {
               currentCompany = exp.company
-              console.log('[步骤5] 找到 currentCompany:', currentCompany)
               break
             }
           }
         }
-        console.log('[步骤5] 最终 currentCompany:', currentCompany)
 
-        const candidateName = parsedData.name || parsedData.personal_info?.name || '未知'
-        const salaryExpectation = parsedData.expected_salary || ''
-        const riskTag = matchData.risk_tag || ''
+        const expectedMinSalary = typeof parsedData.expected_min_salary === 'number' && !isNaN(parsedData.expected_min_salary) ? parsedData.expected_min_salary : null
+        const expectedMaxSalary = typeof parsedData.expected_max_salary === 'number' && !isNaN(parsedData.expected_max_salary) ? parsedData.expected_max_salary : null
 
-        console.log('[步骤5] 候选人字段汇总:')
-        console.log('  candidateName:', candidateName)
-        console.log('  salaryExpectation:', salaryExpectation)
-        console.log('  riskTag:', riskTag)
+        console.log('[步骤4-Mapping] 【其他字段】')
+        console.log('  age:', age)
+        console.log('  current_company:', currentCompany)
+        console.log('  expected_min_salary:', expectedMinSalary)
+        console.log('  expected_max_salary:', expectedMaxSalary)
+        console.log('='.repeat(60) + '\n')
 
         const candidateId = uuidv4()
-        console.log('[步骤5] 生成 candidateId:', candidateId)
+        console.log('[步骤4] 生成 candidateId:', candidateId)
 
         const cleanParsedData = deepParseJSON(parsedData)
-        console.log('[步骤5] 清洗 parsed_data 前类型:', typeof parsedData, '后类型:', typeof cleanParsedData)
-        console.log('[步骤5] 清洗 parsed_data 前300字:', JSON.stringify(cleanParsedData).substring(0, 300))
+        console.log('[步骤4] 清洗 parsed_data 前类型:', typeof parsedData, '后类型:', typeof cleanParsedData)
+        console.log('[步骤4] 清洗 parsed_data 前300字:', JSON.stringify(cleanParsedData).substring(0, 300))
 
         const jsonParsedData = serializeForJSON(cleanParsedData)
-        console.log('[步骤5] parsed_data 序列化后长度:', jsonParsedData.length, '预览:', jsonParsedData.substring(0, 200))
+        console.log('[步骤4] parsed_data 序列化后长度:', jsonParsedData.length, '预览:', jsonParsedData.substring(0, 200))
 
-        console.log('[步骤5] 即将 INSERT INTO candidates, 参数:')
+        console.log('[步骤4] 即将 INSERT INTO candidates, 参数:')
         console.log('  id:', candidateId)
         console.log('  company_id:', companyId)
         console.log('  job_id:', jobId)
         console.log('  name:', candidateName)
         console.log('  raw_text 长度:', resumeText.length)
         console.log('  parsed_data(json str) 长度:', jsonParsedData.length)
-        console.log('  work_years:', workYears)
+        console.log('  experience_years:', experienceYears, '(integer)')
+        console.log('  age:', age)
+        console.log('  education:', education)
         console.log('  current_company:', currentCompany)
-        console.log('  risk_tag:', riskTag)
-        console.log('  salary_expectation:', salaryExpectation)
+        console.log('  expected_min_salary:', expectedMinSalary)
+        console.log('  expected_max_salary:', expectedMaxSalary)
 
         const candidateResult = await queryOne<any>(
           `INSERT INTO candidates (
             id, company_id, job_id, name, raw_text, parsed_data, status, source,
-            work_years, current_company, risk_tag, salary_expectation, created_at
-          ) VALUES ($1, $2, $3, $4, $5, $6::json, $7, $8, $9, $10, $11, $12, NOW()) RETURNING *`,
+            experience_years, age, current_company, expected_min_salary, expected_max_salary, education, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6::json, $7, $8, $9, $10, $11, $12, $13, $14, NOW()) RETURNING *`,
           [
             candidateId,
             companyId,
@@ -416,10 +402,12 @@ export async function POST(request: NextRequest) {
             jsonParsedData,
             'pending',
             'upload',
-            workYears,
+            experienceYears,
+            age,
             currentCompany,
-            riskTag,
-            salaryExpectation
+            expectedMinSalary,
+            expectedMaxSalary,
+            education
           ]
         )
 
@@ -428,16 +416,72 @@ export async function POST(request: NextRequest) {
         }
 
         const candidate = candidateResult
-        console.log('[步骤5] INSERT INTO candidates 成功, 返回的 candidate keys:', Object.keys(candidate))
-        console.log('[步骤5] 返回的 candidate:', JSON.stringify(candidate, null, 2))
+        console.log('[步骤4] INSERT INTO candidates 成功, 返回的 candidate keys:', Object.keys(candidate))
+        console.log('[步骤4] 返回的 candidate:', JSON.stringify(candidate, null, 2))
 
-        const cleanMatchData = deepParseJSON(matchData) || {}
-        const safeHardCondition = toJSONObjectForPG(cleanMatchData.hard_condition)
-        const safeTechSkill = toJSONObjectForPG(cleanMatchData.tech_skill)
-        const safeProjectExp = toJSONObjectForPG(cleanMatchData.project_exp)
-        const safeRiskPenalty = toJSONObjectForPG(cleanMatchData.risk_penalty)
-        const safeRiskBlock = cleanMatchData.risk_block ? toJSONObjectForPG(cleanMatchData.risk_block) : null
-        const safeMatchAdvantages = Array.isArray(cleanMatchData.match_advantages) ? cleanMatchData.match_advantages : []
+        // 调用三层混合打分引擎
+        console.log('[步骤4] 调用 calculateHybridScore...')
+        const scoringResult = await calculateHybridScore(candidateId, jobId, companyId)
+        console.log('[步骤4] 混合打分完成, total_score:', scoringResult.total_score)
+
+        // 风险标签动态逻辑
+        // 1. 优先获取大模型返回的精准业务标签（根据你的接口结构，从 layer3 或 project_exp 中提取），读不到则默认 '低风险'
+        let riskTag = scoringResult.layer3?.risk_tag || scoringResult.project_exp?.risk_tag || '低风险'
+
+        // 2. 拦截 Layer 1 淘汰者，强制覆盖风险标签（优先级最高）
+        if (scoringResult.hard_condition && !scoringResult.hard_condition.passed) {
+          const failedDetails = scoringResult.hard_condition.details.filter((d: any) => !d.matched)
+          const failedNames = failedDetails.map((d: any) => d.name)
+          console.log('[步骤4] Layer 1 淘汰，未通过项:', failedNames)
+
+          if (failedNames.includes('学历要求') && failedNames.includes('工作经验')) {
+            riskTag = '学历与经验不符'
+          } else if (failedNames.includes('学历要求')) {
+            riskTag = '学历不符'
+          } else if (failedNames.includes('工作经验')) {
+            riskTag = '经验不足'
+          } else {
+            riskTag = '硬性条件不符'
+          }
+        }
+
+        console.log('[步骤4] 最终风险标签:', riskTag)
+
+        // 更新候选人的 risk_tag
+        await query(
+          `UPDATE candidates SET risk_tag = $1 WHERE id = $2`,
+          [riskTag, candidateId]
+        )
+        candidate.risk_tag = riskTag
+
+        sendProgress(4, 'done')
+        sendProgress(5, 'start')
+
+        // 组装兼容旧版的数据结构
+        const matchData = {
+          total_score: scoringResult.total_score,
+          hard_condition: scoringResult.hard_condition,
+          tech_skill: {
+            vector_similarity: scoringResult.vector_similarity,
+            matched_skills: [],
+            missing_skills: [],
+            extra_skills: [],
+            total_score: scoringResult.vector_similarity?.score || 0,
+            max_score: scoringResult.vector_similarity?.max_score || 40
+          },
+          project_exp: scoringResult.project_exp,
+          risk_penalty: scoringResult.risk_penalty,
+          risk_block: scoringResult.risk_block,
+          risk_tag: riskTag,
+          match_advantages: scoringResult.match_advantages || []
+        }
+
+        const safeHardCondition = toJSONObjectForPG(matchData.hard_condition)
+        const safeTechSkill = toJSONObjectForPG(matchData.tech_skill)
+        const safeProjectExp = toJSONObjectForPG(matchData.project_exp)
+        const safeRiskPenalty = toJSONObjectForPG(matchData.risk_penalty)
+        const safeRiskBlock = matchData.risk_block ? toJSONObjectForPG(matchData.risk_block) : null
+        const safeMatchAdvantages = Array.isArray(matchData.match_advantages) ? matchData.match_advantages : []
 
         const jsonHardCondition = serializeForJSON(safeHardCondition)
         const jsonTechSkill = serializeForJSON(safeTechSkill)
@@ -447,13 +491,15 @@ export async function POST(request: NextRequest) {
         const jsonMatchAdvantages = serializeForJSON(safeMatchAdvantages)
 
         console.log('[步骤5] 即将 INSERT INTO match_results, 参数:')
-        console.log('  total_score:', (cleanMatchData.total_score ?? 0), '(类型:', typeof (cleanMatchData.total_score ?? 0), ')')
+        console.log('  total_score:', matchData.total_score, '(类型:', typeof matchData.total_score, ')')
         console.log('  hard_condition(json str):', jsonHardCondition.substring(0, 150))
         console.log('  tech_skill(json str):', jsonTechSkill.substring(0, 150))
         console.log('  project_exp(json str):', jsonProjectExp.substring(0, 150))
         console.log('  risk_penalty(json str):', jsonRiskPenalty.substring(0, 150))
         console.log('  risk_block(json str):', jsonRiskBlock.substring(0, 150))
         console.log('  match_advantages(json str):', jsonMatchAdvantages.substring(0, 150))
+
+        const finalScore = Math.round(scoringResult.total_score);
 
         await query(
           `INSERT INTO match_results (
@@ -464,7 +510,7 @@ export async function POST(request: NextRequest) {
             uuidv4(),
             candidate.id,
             jobId,
-            (cleanMatchData.total_score ?? 0) as number,
+            finalScore,
             jsonHardCondition,
             jsonTechSkill,
             jsonProjectExp,

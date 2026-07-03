@@ -62,6 +62,13 @@ export type Database = {
           created_by: string
           created_at: string
           updated_at: string
+          min_experience?: number
+          min_education?: string
+          min_salary?: number
+          max_salary?: number
+          location?: string
+          core_skills?: any[]
+          parsed_data?: any
         }
         Insert: {
           id?: string
@@ -72,6 +79,13 @@ export type Database = {
           created_by: string
           created_at?: string
           updated_at?: string
+          min_experience?: number
+          min_education?: string
+          min_salary?: number
+          max_salary?: number
+          location?: string
+          core_skills?: any[]
+          parsed_data?: any
         }
         Update: {
           id?: string
@@ -82,6 +96,13 @@ export type Database = {
           created_by?: string
           created_at?: string
           updated_at?: string
+          min_experience?: number
+          min_education?: string
+          min_salary?: number
+          max_salary?: number
+          location?: string
+          core_skills?: any[]
+          parsed_data?: any
         }
       }
       candidates: {
@@ -94,10 +115,13 @@ export type Database = {
           parsed_data: CandidateParsedData
           status: 'pending' | 'shortlisted' | 'removed'
           source: 'upload' | 'manual'
-          work_years?: string | number
+          experience_years?: number
+          age?: number
           current_company?: string
           risk_tag?: string
-          salary_expectation?: string
+          expected_min_salary?: number
+          expected_max_salary?: number
+          education?: string
           created_at: string
         }
         Insert: {
@@ -109,10 +133,13 @@ export type Database = {
           parsed_data?: CandidateParsedData
           status?: 'pending' | 'shortlisted' | 'removed'
           source: 'upload' | 'manual'
-          work_years?: string | number
+          experience_years?: number
+          age?: number
           current_company?: string
           risk_tag?: string
-          salary_expectation?: string
+          expected_min_salary?: number
+          expected_max_salary?: number
+          education?: string
           created_at?: string
         }
         Update: {
@@ -124,10 +151,13 @@ export type Database = {
           parsed_data?: CandidateParsedData
           status?: 'pending' | 'shortlisted' | 'removed'
           source?: 'upload' | 'manual'
-          work_years?: string | number
+          experience_years?: number
+          age?: number
           current_company?: string
           risk_tag?: string
-          salary_expectation?: string
+          expected_min_salary?: number
+          expected_max_salary?: number
+          education?: string
           created_at?: string
         }
       }
@@ -253,11 +283,12 @@ export type CandidateParsedData = {
   email?: string
   phone?: string
   location?: string
-  age?: string | number
-  work_years?: string
+  age?: number
+  experience_years?: number
   degree_level?: string
   current_salary?: string
-  expected_salary?: string
+  expected_min_salary?: number
+  expected_max_salary?: number
   job_target?: string
   campus_experience?: {
     description?: string

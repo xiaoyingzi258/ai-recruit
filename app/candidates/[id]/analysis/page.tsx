@@ -10,7 +10,7 @@ import type { AnalysisSummary, AnalysisRiskWarnings, AnalysisTechTranslation, An
 type Candidate = {
   id: string
   name: string
-  work_years?: string | number
+  experience_years?: number
   current_company?: string
   parsed_data?: any
   job_id: string | null
@@ -254,10 +254,10 @@ export default function AnalysisPage() {
                     <span>{education.degree || ''} {education.major || ''}</span>
                   </div>
                 )}
-                {candidate.work_years != null && (
+                {candidate.experience_years != null && (
                   <div className="flex items-center gap-1.5">
                     <Clock className="w-4 h-4" />
-                    <span>{typeof candidate.work_years === 'number' ? (candidate.work_years === 0 ? '应届' : `${candidate.work_years}年经验`) : candidate.work_years}</span>
+                    <span>{candidate.experience_years === 0 ? '应届' : `${candidate.experience_years}年经验`}</span>
                   </div>
                 )}
                 {candidate.current_company && (
@@ -298,10 +298,20 @@ export default function AnalysisPage() {
           </p>
           <button
             onClick={handleStartAnalysis}
-            className="px-8 py-3 bg-[#4AB5A9] text-white font-medium rounded-xl hover:bg-[#3d9a8e] transition-colors flex items-center gap-2"
+            disabled={analyzing}
+            className="px-8 py-3 bg-[#4AB5A9] text-white font-medium rounded-xl hover:bg-[#3d9a8e] transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <Sparkles className="w-5 h-5" />
-            开始深度解析
+            {analyzing ? (
+              <>
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white" />
+                解析中...
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-5 h-5" />
+                开始深度解析
+              </>
+            )}
           </button>
         </div>
       )}
@@ -542,33 +552,31 @@ export default function AnalysisPage() {
             </div>
 
             {skillMatch && skillMatch.length > 0 ? (
-              <div className="space-y-5">
-                {skillMatch.map((skill, idx) => (
-                  <div key={idx} className="bg-gray-50 rounded-xl p-5">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-[#1C1E3A] text-sm">{skill.skill_name}</span>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {skillMatch.map((skill, idx) => {
+                  const score = skill.match_level || 0
+                  const scoreColor = score >= 80 ? 'text-emerald-500' : score >= 40 ? 'text-amber-500' : 'text-red-500'
+                  const analysisBg = score >= 80 ? 'bg-emerald-50/50' : score >= 40 ? 'bg-amber-50/50' : 'bg-red-50/50'
+                  const analysisText = score >= 80 ? 'text-emerald-800' : score >= 40 ? 'text-amber-800' : 'text-red-800'
+                  
+                  return (
+                    <div key={idx} className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm hover:shadow-md hover:border-gray-300 transition-all">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-gray-800 font-semibold text-[15px]">{skill.skill_name}</span>
+                        <span className={`text-xl font-bold ${scoreColor}`}>{score}%</span>
                       </div>
-                      <span className="text-sm font-bold text-[#4AB5A9]">{skill.match_level}%</span>
+                      
+                      <div className="text-xs mb-3">
+                        <span className="text-gray-400">岗位要求：</span>
+                        <span className="text-gray-600">{skill.job_requirement}</span>
+                      </div>
+                      
+                      <div className={`${analysisBg} rounded-lg p-3`}>
+                        <p className={`text-sm leading-relaxed ${analysisText}`}>{skill.match_comment}</p>
+                      </div>
                     </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2.5 mb-2">
-                      <div
-                        className="h-2.5 rounded-full transition-all duration-500"
-                        style={{
-                          width: `${skill.match_level}%`,
-                          backgroundColor:
-                            skill.match_level >= 80 ? '#4AB5A9' :
-                            skill.match_level >= 60 ? '#F59E0B' :
-                            '#EF4444',
-                        }}
-                      />
-                    </div>
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-[#4AB5A9]">岗位要求：{skill.job_requirement}</span>
-                    </div>
-                    <p className={`text-sm mt-2 leading-relaxed ${(skill.match_level || 0) >= 60 ? 'text-yellow-600' : 'text-red-600'}`}>{skill.match_comment}</p>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             ) : (
               <div className="bg-gray-50 rounded-xl p-8 text-center">

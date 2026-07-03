@@ -267,6 +267,8 @@ export async function POST(request: NextRequest) {
         analyzeData = cleanParsed
       }
       console.log('[analyze-candidate] JSON 解析成功, top-level keys:', analyzeData && typeof analyzeData === 'object' ? Object.keys(analyzeData) : 'null')
+    console.log('[analyze-candidate] tech_translation 原始数据:', JSON.stringify(analyzeData.tech_translation))
+    console.log('[analyze-candidate] tech_translation 长度:', Array.isArray(analyzeData.tech_translation) ? analyzeData.tech_translation.length : 'N/A')
     } catch (e) {
       console.warn('[analyze-candidate] JSON 解析失败，尝试用原始结果:', e)
       analyzeData = { raw_result: analyzeResult }
@@ -408,7 +410,7 @@ export async function POST(request: NextRequest) {
     console.log('[analyze-candidate] 写入前 JSON 字段检查 (最终):')
     console.log('  summary 类型:', typeof safeSummary, '内容:', JSON.stringify(safeSummary).substring(0, 200))
     console.log('  risk_warnings 类型:', typeof safeRiskWarnings, '内容:', JSON.stringify(safeRiskWarnings).substring(0, 200))
-    console.log('  tech_translation 类型:', typeof safeTechTranslation, '内容:', JSON.stringify(safeTechTranslation).substring(0, 200))
+    console.log('  tech_translation 类型:', typeof safeTechTranslation, '长度:', Array.isArray(safeTechTranslation) ? safeTechTranslation.length : 'N/A', '完整内容:', JSON.stringify(safeTechTranslation))
     console.log('  skill_match 类型:', typeof safeSkillMatch, '内容:', JSON.stringify(safeSkillMatch).substring(0, 200))
 
     const jsonSummary = serializeForJSON(safeSummary)
@@ -437,68 +439,27 @@ export async function POST(request: NextRequest) {
 
     let newAnalysis: any = null
 
-    if (force) {
-      const existingForUpsert = await queryOne<any>(
-        `SELECT id FROM analysis_results WHERE candidate_id = $1 LIMIT 1`,
-        [candidate_id]
-      )
-
-      if (existingForUpsert) {
-        console.log('[analyze-candidate] force=true，更新已存在的分析数据 id:', existingForUpsert.id)
-        newAnalysis = await queryOne<any>(
-          `UPDATE analysis_results SET
-            job_id = $1,
-            summary = $2::json,
-            risk_warnings = $3::json,
-            tech_translation = $4::json,
-            skill_match = $5::json,
-            updated_at = NOW()
-          WHERE id = $6
-          RETURNING *`,
-          [
-            job_id,
-            insertPayload.summary,
-            insertPayload.risk_warnings,
-            insertPayload.tech_translation,
-            insertPayload.skill_match,
-            existingForUpsert.id
-          ]
-        )
-      } else {
-        console.log('[analyze-candidate] force=true，无现有数据，直接插入')
-        newAnalysis = await queryOne<any>(
-          `INSERT INTO analysis_results (
-            id, candidate_id, job_id, summary, risk_warnings, tech_translation, skill_match, updated_at, created_at
-          ) VALUES ($1, $2, $3, $4::json, $5::json, $6::json, $7::json, NOW(), NOW())
-          RETURNING *`,
-          [
-            uuidv4(),
-            candidate_id,
-            job_id,
-            insertPayload.summary,
-            insertPayload.risk_warnings,
-            insertPayload.tech_translation,
-            insertPayload.skill_match
-          ]
-        )
-      }
-    } else {
-      newAnalysis = await queryOne<any>(
-        `INSERT INTO analysis_results (
-          id, candidate_id, job_id, summary, risk_warnings, tech_translation, skill_match, updated_at, created_at
-        ) VALUES ($1, $2, $3, $4::json, $5::json, $6::json, $7::json, NOW(), NOW())
-        RETURNING *`,
-        [
-          uuidv4(),
-          candidate_id,
-          job_id,
-          insertPayload.summary,
-          insertPayload.risk_warnings,
-          insertPayload.tech_translation,
-          insertPayload.skill_match
-        ]
-      )
-    }
+    newAnalysis = await queryOne<any>(
+      `INSERT INTO analysis_results (
+        candidate_id, job_id, summary, risk_warnings, tech_translation, skill_match, updated_at
+      ) VALUES ($1, $2, $3::json, $4::json, $5::json, $6::json, NOW())
+      ON CONFLICT (candidate_id, job_id)
+      DO UPDATE SET
+        summary = EXCLUDED.summary,
+        risk_warnings = EXCLUDED.risk_warnings,
+        tech_translation = EXCLUDED.tech_translation,
+        skill_match = EXCLUDED.skill_match,
+        updated_at = NOW()
+      RETURNING *`,
+      [
+        candidate_id,
+        job_id,
+        insertPayload.summary,
+        insertPayload.risk_warnings,
+        insertPayload.tech_translation,
+        insertPayload.skill_match
+      ]
+    )
 
     if (!newAnalysis) {
       throw new Error('插入分析数据失败')

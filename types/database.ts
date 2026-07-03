@@ -27,6 +27,13 @@ export type Job = {
   created_by: string
   created_at: string
   updated_at: string
+  min_experience: number
+  min_education: string | null
+  min_salary: number
+  max_salary: number
+  location: string | null
+  core_skills: any[] | null
+  parsed_data: any | null
 }
 
 export type Candidate = {
@@ -38,11 +45,14 @@ export type Candidate = {
   parsed_data: CandidateParsedData | null
   status: 'pending' | 'shortlisted' | 'removed'
   source: 'upload' | 'manual'
-  work_years: number | null
+  experience_years: number | null
+  age: number | null
   current_company: string | null
   risk_tag: string | null
   avatar: string | null
-  salary_expectation: string | null
+  expected_min_salary: number | null
+  expected_max_salary: number | null
+  education: string | null
   created_at: string
 }
 
@@ -113,11 +123,12 @@ export type CandidateParsedData = {
   email?: string
   phone?: string
   location?: string
-  age?: string | number
-  work_years?: string
+  age?: number
+  experience_years?: number
   degree_level?: string
   current_salary?: string
-  expected_salary?: string
+  expected_min_salary?: number
+  expected_max_salary?: number
   job_target?: string
   campus_experience?: {
     description?: string

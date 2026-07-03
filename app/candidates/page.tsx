@@ -51,10 +51,11 @@ const formatEducation = (education: any) => {
 type CandidateWithMatch = {
   id: string
   name: string
-  work_years?: string | number
+  experience_years?: number
   current_company?: string
   risk_tag?: string
-  salary_expectation?: string
+  expected_min_salary?: number
+  expected_max_salary?: number
   status: 'shortlisted' | 'removed'
   parsed_data?: any
   match_score?: number
@@ -79,7 +80,8 @@ export default function CandidatesPage() {
   const [uploading, setUploading] = useState(false)
   const [uploadStep, setUploadStep] = useState('')
   const [showUploadModal, setShowUploadModal] = useState(false)
-  const [uploadSteps, setUploadSteps] = useState<{ id: number; text: string; status: 'pending' | 'active' | 'done' }[]>([])
+  const [uploadSteps, setUploadSteps] = useState<{ id: number; title: string; description: string; status: 'pending' | 'active' | 'done' }[]>([])
+  const [ellipsisCount, setEllipsisCount] = useState(0)
   const [candidates, setCandidates] = useState<CandidateWithMatch[]>([])
   const [loading, setLoading] = useState(true)
   const [rematching, setRematching] = useState<string | null>(null)
@@ -87,6 +89,8 @@ export default function CandidatesPage() {
   const [showToast, setShowToast] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const timerRef = useRef<number | null>(null)
+  const ellipsisTimerRef = useRef<number | null>(null)
 
   const showToastMessage = (message: string, type: 'success' | 'error' | 'info') => {
     // 先清空之前的toast
@@ -165,10 +169,11 @@ export default function CandidatesPage() {
       const mapped: CandidateWithMatch[] = candidatesData.map((c: any) => ({
         id: c.id,
         name: c.name,
-        work_years: c.work_years,
+        experience_years: c.experience_years,
         current_company: c.current_company,
         risk_tag: c.risk_tag,
-        salary_expectation: c.salary_expectation,
+        expected_min_salary: c.expected_min_salary,
+        expected_max_salary: c.expected_max_salary,
         status: c.status,
         parsed_data: c.parsed_data,
         match_score: c.match_score
@@ -198,22 +203,74 @@ export default function CandidatesPage() {
     }
 
     const initialSteps = [
-      { id: 1, text: '正在读取简历文件', status: 'pending' as const },
-      { id: 2, text: '正在解析简历内容', status: 'pending' as const },
-      { id: 3, text: 'AI正在分析简历信息', status: 'pending' as const },
-      { id: 4, text: 'AI正在对比岗位要求', status: 'pending' as const },
-      { id: 5, text: '正在保存匹配结果', status: 'pending' as const },
+      { id: 1, title: '提取并结构化简历文档', description: '正在解析 PDF 并清洗文本内容', status: 'pending' as const },
+      { id: 2, title: 'AI 大模型深度解析履历', description: '调用大语言模型提取关键特征', status: 'pending' as const },
+      { id: 3, title: '构建候选人高维特征向量', description: '生成 2048 维度的能力图谱', status: 'pending' as const },
+      { id: 4, title: '三层打分引擎智能匹配中', description: '规则校验 + 向量对比 + LLM 深度推理', status: 'pending' as const },
+      { id: 5, title: '生成人才画像并安全入库', description: '完成评估，正在保存最终报告', status: 'pending' as const },
     ]
 
     setUploading(true)
     setShowUploadModal(true)
     setUploadSteps(initialSteps.map(s => ({ ...s, status: 'pending' as const })))
     setUploadStep('')
+    setEllipsisCount(0)
+
+    const clearTimers = () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current)
+        timerRef.current = null
+      }
+      if (ellipsisTimerRef.current) {
+        clearInterval(ellipsisTimerRef.current)
+        ellipsisTimerRef.current = null
+      }
+    }
+
+    const advanceStep = (stepId: number) => {
+      setUploadSteps(prev => prev.map(s => {
+        if (s.id === stepId) {
+          return { ...s, status: 'active' as const }
+        }
+        if (s.id < stepId) {
+          return { ...s, status: 'done' as const }
+        }
+        return s
+      }))
+    }
+
+    advanceStep(1)
+
+    let stepIndex = 1
+    const scheduleNextStep = () => {
+      if (stepIndex >= 4) return
+
+      let delay = 0
+      if (stepIndex === 1) delay = 1000
+      else if (stepIndex === 2) delay = 4000
+      else if (stepIndex === 3) delay = 3000
+
+      stepIndex++
+      timerRef.current = window.setTimeout(() => {
+        advanceStep(stepIndex)
+
+        if (stepIndex === 4) {
+          ellipsisTimerRef.current = window.setInterval(() => {
+            setEllipsisCount(prev => (prev + 1) % 4)
+          }, 500)
+        } else {
+          scheduleNextStep()
+        }
+      }, delay)
+    }
+
+    scheduleNextStep()
 
     try {
       const fileName = file.name.toLowerCase()
 
       if (!fileName.endsWith('.docx') && !fileName.endsWith('.pdf')) {
+        clearTimers()
         showToastMessage('只支持 .docx 和 .pdf 格式的简历', 'error')
         return
       }
@@ -257,15 +314,18 @@ export default function CandidatesPage() {
             const data = JSON.parse(dataStr)
 
             if (data.type === 'progress') {
-              setUploadSteps(prev => prev.map(s => {
-                if (s.id === data.stepId) {
-                  return { ...s, status: data.status, text: data.text || s.text }
-                }
-                if (data.status === 'start' && s.id < data.stepId) {
-                  return { ...s, status: 'done' as const }
-                }
-                return s
-              }))
+              if (data.stepId === 5 && data.status === 'start') {
+                clearTimers()
+                setUploadSteps(prev => prev.map(s => {
+                  if (s.id <= 4) {
+                    return { ...s, status: 'done' as const }
+                  }
+                  if (s.id === 5) {
+                    return { ...s, status: 'active' as const }
+                  }
+                  return s
+                }))
+              }
             } else if (data.type === 'done') {
               success = true
               setUploadSteps(prev => prev.map(s => ({ ...s, status: 'done' as const })))
@@ -279,6 +339,7 @@ export default function CandidatesPage() {
       }
 
       if (success) {
+        await new Promise(resolve => setTimeout(resolve, 500))
         showToastMessage('简历解析并匹配完成！', 'success')
         await loadData()
       } else {
@@ -286,10 +347,13 @@ export default function CandidatesPage() {
       }
 
     } catch (error) {
+      clearTimers()
       console.error('[候选人页面] 上传错误:', error)
-      showToastMessage('处理失败: ' + (error as Error).message, 'error')
+      showToastMessage('解析失败，请重试', 'error')
+      setUploadSteps(prev => prev.map(s => ({ ...s, status: 'pending' as const })))
     } finally {
       setTimeout(() => {
+        clearTimers()
         setUploading(false)
         setUploadStep('')
         setShowUploadModal(false)
@@ -453,50 +517,110 @@ export default function CandidatesPage() {
 
       {showUploadModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl p-8 max-w-md w-full mx-4">
-            <div className="text-center mb-6">
-              <div className="w-16 h-16 bg-[#E8F5F3] rounded-full flex items-center justify-center mx-auto mb-4">
-                {uploading ? (
-                  <Loader2 className="w-8 h-8 text-[#4AB5A9] animate-spin" />
-                ) : (
-                  <CheckCircle className="w-8 h-8 text-[#4AB5A9]" />
-                )}
-              </div>
-              <h3 className="text-xl font-bold text-[#1C1E3A]">
-                {uploading ? '正在处理简历...' : '解析完成'}
+          <div 
+            className="bg-white rounded-[16px] p-8 shadow-2xl relative overflow-hidden"
+            style={{ 
+              width: '600px',
+              maxWidth: '90vw',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)' 
+            }}
+          >
+            <div 
+              className="absolute top-0 left-0 right-0 h-1"
+              style={{
+                background: 'linear-gradient(90deg, transparent 0%, #14b8a6 50%, transparent 100%)',
+                animation: 'scanLine 2s linear infinite'
+              }}
+            />
+            <style>{`
+              @keyframes scanLine {
+                0% { transform: translateX(-100%); }
+                100% { transform: translateX(100%); }
+              }
+              @keyframes pulseRing {
+                0% { transform: scale(1); opacity: 1; }
+                100% { transform: scale(2); opacity: 0; }
+              }
+              .pulse-ring {
+                animation: pulseRing 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+              }
+            `}</style>
+
+            <div className="text-center mb-6 pt-2">
+              <h3 className="text-xl font-bold text-[#1C1E3A] mb-2">
+                AI 智能引擎解析中
               </h3>
+              <p className="text-sm text-gray-400">
+                正在执行深度数据分析，请勿关闭窗口...
+              </p>
             </div>
-            <div className="flex flex-col items-center space-y-3">
+
+            <div className="w-full h-1.5 bg-[#F0F0EE] rounded-full mb-8 overflow-hidden">
+              <div 
+                className="h-full bg-[#14b8a6] rounded-full transition-all duration-500 ease-in-out"
+                style={{ 
+                  width: `${Math.max(uploadSteps.filter(s => s.status === 'done').length * 20, uploadSteps.find(s => s.status === 'active') ? uploadSteps.filter(s => s.status === 'done').length * 20 + 5 : 0)}%` 
+                }}
+              />
+            </div>
+
+            <div className="space-y-3">
               {uploadSteps.map((step) => (
-                <div key={step.id} className="flex items-center gap-3 w-56">
-                  <div
-                    className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 transition-all ${
-                      step.status === 'done'
-                        ? 'bg-[#4AB5A9] text-white'
-                        : step.status === 'active'
-                        ? 'bg-[#E8F5F3] text-[#4AB5A9]'
-                        : 'bg-gray-100 text-gray-400'
-                    }`}
-                  >
-                    {step.status === 'done' ? (
-                      <CheckCircle className="w-4 h-4" />
-                    ) : step.status === 'active' ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <span className="text-xs font-medium">{step.id}</span>
-                    )}
+                <div
+                  key={step.id}
+                  className={`relative p-4 rounded-xl transition-all duration-300 ${
+                    step.status === 'pending'
+                      ? 'bg-[#F0F0EE]'
+                      : step.status === 'active'
+                      ? 'bg-white border-2 border-[#14b8a6] shadow-[0_0_20px_rgba(20,184,166,0.3)] transform scale-[1.02]'
+                      : 'bg-transparent py-2'
+                  }`}
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="relative">
+                      {step.status === 'active' && (
+                        <div 
+                          className="absolute inset-0 rounded-full bg-[#14b8a6] pulse-ring"
+                        />
+                      )}
+                      <div
+                        className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-sm font-bold transition-all ${
+                          step.status === 'done'
+                            ? 'bg-[#14b8a6] text-white'
+                            : step.status === 'active'
+                            ? 'bg-[#14b8a6] text-white relative z-10'
+                            : 'bg-white text-gray-400 border border-gray-300'
+                        }`}
+                      >
+                        {step.status === 'done' ? (
+                          '✓'
+                        ) : step.status === 'active' ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          step.id
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex-1">
+                      <div className={`font-medium text-sm transition-all ${
+                        step.status === 'done'
+                          ? 'text-gray-400'
+                          : step.status === 'active'
+                          ? 'text-[#1C1E3A]'
+                          : 'text-gray-400'
+                      }`}>
+                        {step.title}
+                        {step.id === 4 && step.status === 'active' && '.'.repeat(ellipsisCount)}
+                      </div>
+                      <div className={`text-xs mt-1 transition-all duration-300 ${
+                        step.status === 'active'
+                          ? 'opacity-100 max-h-6 text-gray-400'
+                          : 'opacity-0 max-h-0 overflow-hidden'
+                      }`}>
+                        {step.description}
+                      </div>
+                    </div>
                   </div>
-                  <span
-                    className={`text-sm ${
-                      step.status === 'done'
-                        ? 'text-gray-600'
-                        : step.status === 'active'
-                        ? 'text-[#1C1E3A] font-medium'
-                        : 'text-gray-400'
-                    }`}
-                  >
-                    {step.text}
-                  </span>
                 </div>
               ))}
             </div>
@@ -700,7 +824,7 @@ export default function CandidatesPage() {
                         <div className="font-medium text-gray-900">{candidate.name}</div>
                       </td>
                       <td className="px-6 py-4 text-gray-600">
-                        {formatEducation(candidate.parsed_data?.education)} / {candidate.parsed_data?.work_years || (candidate.work_years !== null && candidate.work_years !== undefined ? candidate.work_years + '年' : '-')}
+                        {formatEducation(candidate.parsed_data?.education)} / {candidate.experience_years !== null && candidate.experience_years !== undefined ? candidate.experience_years + '年' : '-'}
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex flex-wrap gap-1">
