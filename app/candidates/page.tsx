@@ -889,63 +889,42 @@ export default function CandidatesPage() {
                                   
                                   return (
                                     <>
-                                      <div className="flex items-center justify-between mb-2">
-                                        <div className="flex items-center gap-2">
-                                          <span className="w-2 h-2 rounded-full bg-blue-500" />
-                                          <span className="text-xs text-gray-600">硬性条件</span>
-                                        </div>
-                                        <span className={`font-mono font-semibold ${isBlocked ? 'text-red-500' : 'text-gray-700'}`}>
-                                          {l1Passed ? l1Score.toFixed(1) : <span className="line-through decoration-red-500">{l1Score.toFixed(1)}</span>}
-                                        </span>
-                                      </div>
-                                      
-                                      <div className="flex items-center justify-between mb-2">
-                                        <div className="flex items-center gap-2">
-                                          <span className={`w-2 h-2 rounded-full ${isBlocked ? 'bg-gray-300' : 'bg-purple-500'}`} />
-                                          <span className="text-xs text-gray-600">技能向量</span>
-                                        </div>
-                                        {isBlocked ? (
-                                          <span className="text-xs text-gray-400 font-normal">未执行</span>
-                                        ) : (
-                                          <span className={`font-mono font-semibold ${l2Score < 10 ? 'text-red-500' : 'text-gray-700'}`}>
-                                            {l2Score.toFixed(1)}
-                                          </span>
-                                        )}
-                                      </div>
-                                      
-                                      <div className="flex items-center justify-between mb-3 pt-2 border-t border-gray-100">
-                                        <div className="flex items-center gap-2">
-                                          <span className={`w-2 h-2 rounded-full ${isBlocked ? 'bg-gray-300' : 'bg-green-500'}`} />
-                                          <span className="text-xs text-gray-600">项目经验</span>
-                                        </div>
-                                        {isBlocked ? (
-                                          <span className="text-xs text-gray-400 font-normal">未执行</span>
-                                        ) : (
-                                          <span className={`font-mono font-semibold ${l3Score < 10 ? 'text-red-500' : 'text-gray-700'}`}>
-                                            {l3Score.toFixed(1)}
-                                          </span>
-                                        )}
-                                      </div>
-                                      
                                       {isBlocked ? (
-                                        <div className="mt-2 p-2 bg-red-50 border border-red-100 rounded-md text-xs text-red-700 leading-relaxed">
-                                          <strong>⚠️ 系统拦截生效</strong><br/>
-                                          候选人硬性条件不达标，为节约 AI 算力，已自动终止深度推理。
-                                        </div>
-                                      ) : (
-                                        <div className="flex items-center justify-between">
-                                          <div className="flex items-center gap-2">
-                                            <span className="w-2 h-2 rounded-full bg-red-500" />
-                                            <span className="text-xs text-gray-600">风险扣分</span>
+                                        <>
+                                          <div className="flex justify-between items-center text-[13px] mb-2 text-red-500">
+                                            <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>硬性条件</div>
+                                            <div className="font-mono font-semibold">0.0</div>
                                           </div>
-                                          {riskScore > 0 ? (
-                                            <span className="font-mono font-semibold bg-red-50 text-red-500 px-1.5 py-0.5 rounded">
-                                              -{riskScore.toFixed(1)}
-                                            </span>
-                                          ) : (
-                                            <span className="font-mono font-semibold text-gray-400">-{riskScore.toFixed(1)}</span>
-                                          )}
-                                        </div>
+                                          <div className="mt-2 p-2 bg-red-50 border border-red-100 rounded-md text-xs text-red-700 leading-relaxed">
+                                            <strong>⚠️ 系统拦截生效</strong><br/>
+                                            候选人硬性条件不达标，为节约 AI 算力，已自动终止深度推理。
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <div className="flex justify-between items-center text-[13px] mb-2 text-gray-700">
+                                            <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>硬性条件</div>
+                                            <div className="font-mono font-semibold">{l1Score.toFixed(1)}</div>
+                                          </div>
+
+                                          <div className="flex justify-between items-center text-[13px] mb-2 text-gray-700">
+                                            <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>技能向量</div>
+                                            <div className="font-mono font-semibold">{l2Score.toFixed(1)}</div>
+                                          </div>
+
+                                          <div className="flex flex-col mb-1">
+                                            <div className="flex justify-between items-center text-[13px] text-gray-700">
+                                              <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>项目经验</div>
+                                              <div className="font-mono font-semibold">{l3Score.toFixed(1)}</div>
+                                            </div>
+                                            {riskScore > 0 && (
+                                              <div className="flex justify-between items-center text-xs text-gray-400 pl-4 mt-1">
+                                                <div>↳ 触发风险项，已折损</div>
+                                                <div className="font-mono">{riskScore.toFixed(1)} 分</div>
+                                              </div>
+                                            )}
+                                          </div>
+                                        </>
                                       )}
                                     </>
                                   )
