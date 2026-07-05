@@ -204,6 +204,11 @@ export async function POST(request: NextRequest) {
 
         console.log('[步骤2] resumeText 前300字:', resumeText.substring(0, 300))
 
+        // 移除 null 字节，避免 PostgreSQL UTF8 编码报错
+        if (resumeText) {
+          resumeText = resumeText.replace(/\x00/g, '');
+        }
+
         sendProgress(2, 'done')
         sendProgress(3, 'start')
 
