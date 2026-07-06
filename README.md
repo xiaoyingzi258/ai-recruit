@@ -1,7 +1,8 @@
 # AI 招聘助手 
 
-## 📒项目PRD文档：https://my.feishu.cn/wiki/LJ7kwVeoaieZ4Hk1Pg1cMMZfnxh?from=from_copylink
-## 🎥项目演示视频：https://my.feishu.cn/wiki/MYB1wtquViEDHlkD4kpcnY3Onad?from=from_copylink
+### 📒项目PRD文档：https://my.feishu.cn/wiki/LJ7kwVeoaieZ4Hk1Pg1cMMZfnxh?from=from_copylink
+### 🎥项目演示视频：https://my.feishu.cn/wiki/MYB1wtquViEDHlkD4kpcnY3Onad?from=from_copylink
+### 项目在线体验入口：http://121.40.72.195:3000/    （登陆邮箱：2505492793@qq.com  密码：cf123456）
 
 > 这是一个基于 Next.js 和大模型技术的全栈实践项目，旨在探索 LLM 与向量检索技术在 B 端人力资源场景中的落地，重点解决 AI 评估过程中的“黑盒化”与“数据可解释性”问题。
 
